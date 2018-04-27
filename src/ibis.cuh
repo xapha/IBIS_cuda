@@ -122,6 +122,7 @@ typedef struct mask_apply {
 
 void generate_mask( int k, int step, mask_design* masks, int* check_x, int* check_y, int* assign_x, int* assign_y );
 void generate_coord_mask( mask_design* masks, mask_apply* masks_pos, int width, int height );
+void set_grid_block_dim( int* __g_dim, int* __t_dim, int ref_t, int value );
 
 typedef struct __c_ibis {
     float* __c_px;
@@ -146,8 +147,14 @@ typedef struct __c_ibis {
     int* __proc;
     int* __labels;
     int* __t_labels;
+    
     int* __to_fill;
-
+    int* __to_fill_x;
+    int* __to_fill_y;
+    
+    int* __to_split_x;
+    int* __to_split_y;
+    
 } __c_ibis;
 
 __device__ void RGB2XYZ( const int& sR, const int& sG, const int& sB, double& X, double& Y, double& Z);
@@ -156,13 +163,19 @@ __device__ void RGB2LAB( const int& sR, const int& sG, const int& sB, double& lv
 
 __global__ void update_seeds( __c_ibis* ibis_data );
 
-__global__ void assign_px( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buffer, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y  );
+__global__ void assign_px( int k, __c_ibis* __c_buffer, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y  );
 
 __global__ void assign_last( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buffer, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y );
 
-__global__ void check_boundaries( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buffer, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y );
+//__global__ void check_boundaries( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buffer, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y );
 
-__global__ void fill_mask( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buffer, int* __c_exec_count, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y, int* __prep_exec_list_x, int* __prep_exec_list_y );
+//__global__ void fill_mask( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buffer, int* __c_exec_count, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y, int* __prep_exec_list_x, int* __prep_exec_list_y );
+
+__global__ void check_boundaries( int k, __c_ibis* __c_buffer, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y, int* __c_split, int* __c_fill );
+
+__global__ void fill_mask( int k, __c_ibis* __c_buffer, int fill_count );
+
+__global__ void split_mask( int k, __c_ibis* __c_buffer, int* __c_exec_count, int split_count, int* __prep_exec_list_x, int* __prep_exec_list_y );
 
 class IBIS
 {
@@ -256,6 +269,7 @@ private:
     mask_apply* masks_pos;
     mask_apply* __c_masks_pos;
     
+    // assign px
     int* __c_exec_list_x;
     int* __c_exec_list_y;
     
@@ -264,6 +278,13 @@ private:
     
     int exec_count;
     int* __c_exec_count;
+
+    // boundaries
+    int* __c_fill;
+    int fill_count;
+    
+    int* __c_split;
+    int split_count;
 
 public:
     double st2, st3, st4;

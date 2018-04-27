@@ -275,10 +275,18 @@ IBIS::~IBIS() {
     cudaFree( __h_buffer->__labels );
     cudaFree( __h_buffer->__t_labels );
     cudaFree( __h_buffer->__to_fill );
+    cudaFree( __h_buffer->__to_fill_x );
+    cudaFree( __h_buffer->__to_fill_y );
+    cudaFree( __h_buffer->__to_split_x );
+    cudaFree( __h_buffer->__to_split_y );
+    
     cudaFree( __h_buffer->__l_vec );
     cudaFree( __h_buffer->__a_vec );
     cudaFree( __h_buffer->__b_vec );
+    
     cudaFree( __c_exec_count );
+    cudaFree( __c_fill );
+    cudaFree( __c_split );
     
     cudaFree( __c_exec_list_x );
     cudaFree( __c_exec_list_y );
@@ -559,10 +567,10 @@ void IBIS::init() {
     
     // mask construction
     masks = new mask_design[ index_mask ];
-    cudaMalloc( (void**) &__c_masks, sizeof( mask_design ) * index_mask );
+    SAFE_C( cudaMalloc( (void**) &__c_masks, sizeof( mask_design ) * index_mask ), "cudaMalloc");
     
     masks_pos = new mask_apply[ index_mask ];
-    cudaMalloc( (void**) &__c_masks_pos, sizeof( mask_apply ) * index_mask );
+    SAFE_C( cudaMalloc( (void**) &__c_masks_pos, sizeof( mask_apply ) * index_mask ), "cudaMalloc");
     
     // set constant memory
     int check_x[ 508 ];
@@ -596,8 +604,8 @@ void IBIS::init() {
     SAFE_C( cudaMemcpyToSymbol( __c_width, &width, sizeof(int) ), "constant");
     SAFE_C( cudaMemcpyToSymbol( __c_height, &height, sizeof(int) ), "constant");
     
-    cudaMemcpy( __c_masks_pos, masks_pos, sizeof( mask_apply ) * index_mask, cudaMemcpyHostToDevice );
-    cudaMemcpy( __c_masks, masks, sizeof( mask_design ) * index_mask, cudaMemcpyHostToDevice );
+    SAFE_C( cudaMemcpy( __c_masks_pos, masks_pos, sizeof( mask_apply ) * index_mask, cudaMemcpyHostToDevice ), "cudaMemcpy");
+    SAFE_C( cudaMemcpy( __c_masks, masks, sizeof( mask_design ) * index_mask, cudaMemcpyHostToDevice ), "cudaMemcpy");
     
     // enforce connectivity buffer
     x_vec = new int[ size ];
@@ -614,24 +622,32 @@ void IBIS::init() {
     initial_repartition = new int[size];
 
     // cuda alloc init data
-    cudaMalloc( (void**) &__h_buffer->__labels, sizeof( int ) * size );
-    cudaMalloc( (void**) &__h_buffer->__t_labels, sizeof( int ) * size );
-    cudaMalloc( (void**) &__h_buffer->__to_fill, sizeof( int ) * size );
-    cudaMalloc( (void**) &__h_buffer->__proc, sizeof( int ) * size );
-    cudaMalloc( (void**) &__h_buffer->__init_repa, sizeof( int ) * size );
-    cudaMalloc( (void**) &__h_buffer->__l_vec, sizeof( float ) * size );
-    cudaMalloc( (void**) &__h_buffer->__a_vec, sizeof( float ) * size );
-    cudaMalloc( (void**) &__h_buffer->__b_vec, sizeof( float ) * size );
+    SAFE_C(  cudaMalloc( (void**) &__h_buffer->__labels, sizeof( int ) * size ), "cudaMalloc");
+    SAFE_C(  cudaMalloc( (void**) &__h_buffer->__t_labels, sizeof( int ) * size ), "cudaMalloc");
     
-    cudaMalloc( (void**) &__c_exec_list_x, sizeof( int ) * size );
-    cudaMalloc( (void**) &__c_exec_list_y, sizeof( int ) * size );
+    SAFE_C(  cudaMalloc( (void**) &__h_buffer->__to_fill, sizeof( int ) * maxSPNumber ), "cudaMalloc");
+    SAFE_C(  cudaMalloc( (void**) &__h_buffer->__to_fill_x, sizeof( int ) * maxSPNumber ), "cudaMalloc");
+    SAFE_C(  cudaMalloc( (void**) &__h_buffer->__to_fill_y, sizeof( int ) * maxSPNumber ), "cudaMalloc");
+    SAFE_C(  cudaMalloc( (void**) &__h_buffer->__to_split_x, sizeof( int ) * maxSPNumber ), "cudaMalloc");
+    SAFE_C(  cudaMalloc( (void**) &__h_buffer->__to_split_y, sizeof( int ) * maxSPNumber ), "cudaMalloc");
     
-    cudaMalloc( (void**) &__prep_exec_list_x, sizeof( int ) * size );
-    cudaMalloc( (void**) &__prep_exec_list_y, sizeof( int ) * size );
+    SAFE_C(  cudaMalloc( (void**) &__h_buffer->__proc, sizeof( int ) * size ), "cudaMalloc");
+    SAFE_C(  cudaMalloc( (void**) &__h_buffer->__init_repa, sizeof( int ) * size ), "cudaMalloc");
+    SAFE_C(  cudaMalloc( (void**) &__h_buffer->__l_vec, sizeof( float ) * size ), "cudaMalloc");
+    SAFE_C(  cudaMalloc( (void**) &__h_buffer->__a_vec, sizeof( float ) * size ), "cudaMalloc");
+    SAFE_C(  cudaMalloc( (void**) &__h_buffer->__b_vec, sizeof( float ) * size ), "cudaMalloc");
     
-    cudaMemcpy( __c_buffer, __h_buffer, sizeof( __c_ibis ), cudaMemcpyHostToDevice );
+    SAFE_C(  cudaMalloc( (void**) &__c_exec_list_x, sizeof( int ) * size ), "cudaMalloc");
+    SAFE_C(  cudaMalloc( (void**) &__c_exec_list_y, sizeof( int ) * size ), "cudaMalloc");
+    
+    SAFE_C(  cudaMalloc( (void**) &__prep_exec_list_x, sizeof( int ) * size ), "cudaMalloc");
+    SAFE_C(  cudaMalloc( (void**) &__prep_exec_list_y, sizeof( int ) * size ), "cudaMalloc");
+    
+    SAFE_C(  cudaMemcpy( __c_buffer, __h_buffer, sizeof( __c_ibis ), cudaMemcpyHostToDevice ), "cudaMalloc");
     
     SAFE_C( cudaMalloc( (void**) &__c_exec_count, sizeof( int ) ), "cudaMalloc" );
+    SAFE_C( cudaMalloc( (void**) &__c_fill, sizeof( int ) ), "cudaMalloc" );
+    SAFE_C( cudaMalloc( (void**) &__c_split, sizeof( int ) ), "cudaMalloc" );
     
 }
 
@@ -733,8 +749,6 @@ void IBIS::process( cv::Mat* img ) {
     cudaMemcpy( __h_buffer->__a_vec, avec, size * sizeof( float ), cudaMemcpyHostToDevice );
     cudaMemcpy( __h_buffer->__b_vec, bvec, size * sizeof( float ), cudaMemcpyHostToDevice );
     
-    cudaMemcpy( __h_buffer->__to_fill, labels, size * sizeof( float ), cudaMemcpyHostToDevice );
-    
     // STEP 2 : process IBIS
 #if OUTPUT_log
     lap = now_ms();
@@ -744,8 +758,6 @@ void IBIS::process( cv::Mat* img ) {
 #if OUTPUT_log
     st3 = now_ms() - lap;
 #endif
-    
-    cudaMemcpy( labels, __h_buffer->__labels, size * sizeof( int ), cudaMemcpyDeviceToHost );
     
     // STEP 3 : post processing
 #if OUTPUT_log
@@ -763,6 +775,7 @@ void IBIS::process( cv::Mat* img ) {
     printf("-----------------\n");
     printf("PERF_T %lf\n", st3+st4);
     printf("IBIS.process\t\t%lf\t ms\n", st3);
+    printf("Kernel exec\t\t%lf\t ms\n", st2);
     printf("IBIS.post_process\t%lf\t ms\n", st4);
 
     #if MASK_chrono
@@ -800,8 +813,6 @@ __global__ void assign_last( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buf
     
     if( index >= exec_count )
         return;
-    
-    // prepare shared buffer
     
     int x_ref = __c_exec_list_x[ index ];
     int y_ref = __c_exec_list_y[ index ];
@@ -851,7 +862,7 @@ __global__ void assign_last( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buf
         __c_buffer->__labels[ index_xy ] = best_sp;
 
 #if VISU
-        __c_buffer->__proc[ index_xy ] += 10;
+        __c_buffer->__proc[ index_xy ] = 10;
 #endif
     }
     
@@ -874,7 +885,7 @@ __global__ void update_seeds( __c_ibis* __c_buffer ) {
 
 }
 
-__global__ void assign_px( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buffer, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y ) {
+__global__ void assign_px( int k, __c_ibis* __c_buffer, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y ) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int px_to_compute = threadIdx.y;
     
@@ -918,6 +929,9 @@ __global__ void assign_px( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buffe
         
         // prepare shared buffer
         int nb_adj = __c_buffer->__c_adj[ init_repart ];
+        //int __adj_sp[ size_roi ];
+        //memcpy( __adj_sp, __c_buffer->__adj_sp + size_roi * init_repart, sizeof(int) * size_roi );
+        
         /*extern __shared__ float __s_seeds_x[];
         extern __shared__ float __s_seeds_y[];
         extern __shared__ float __s_seeds_l[];
@@ -958,6 +972,7 @@ __global__ void assign_px( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buffe
         
         for(int i=0; i<nb_adj; i++) {
             index_sp = __c_buffer->__adj_sp[ size_roi * init_repart + i ];
+            //index_sp = __adj_sp[ i ];
             
             dist_lab = ( l - __c_buffer->__ls[ index_sp ]) * ( l - __c_buffer->__ls[ index_sp ]) +
                        ( a - __c_buffer->__as[ index_sp ]) * ( a - __c_buffer->__as[ index_sp ]) +
@@ -983,13 +998,13 @@ __global__ void assign_px( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buffe
             __c_buffer->__labels[ index_xy ] = best_sp;
 
 #if VISU
-        __c_buffer->__proc[ index_xy ] += 10;
+        __c_buffer->__proc[ index_xy ] = 10;
 #endif
     }
     
 }
 
-__global__ void check_boundaries( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buffer, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y ) {
+__global__ void check_boundaries( int k, __c_ibis* __c_buffer, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y, int* __c_split, int* __c_fill ) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     
     if( index >= exec_count )
@@ -1018,14 +1033,15 @@ __global__ void check_boundaries( mask_apply* __c_masks_pos, int k, __c_ibis* __
             
             if( ii == 0 ) {
                 ref = __c_buffer->__t_labels[ index_xy ];
-                if( ref < 0 )
-                    return;
                 
             }
             else {
                 current_sp = __c_buffer->__t_labels[ index_xy ];
-                if( ref != current_sp || current_sp < 0 )
+                if( ref != current_sp || current_sp < 0 ) {
                     state = false;
+                    break;
+                    
+                }
             
             }
             
@@ -1036,56 +1052,35 @@ __global__ void check_boundaries( mask_apply* __c_masks_pos, int k, __c_ibis* __
     
     }
     
-    //if( k == 2 )
-    if( !state || ref < 0 )
-        return;
-    
-    //printf(" to fill %i, ref : %i \n", index, ref);
-    __c_buffer->__to_fill[ index ] = ref;
+    if( !state || ref < 0 ) {
+        int base = atomicAdd( __c_split, 1 );
+        __c_buffer->__to_split_x[ base ] = x_ref;
+        __c_buffer->__to_split_y[ base ] = y_ref;
+        if( x_ref == -1 && y_ref == -1 )
+            printf(" to split \n ");
+    }
+    else {
+        int base = atomicAdd( __c_fill, 1 );
+        __c_buffer->__to_fill_x[ base ] = x_ref;
+        __c_buffer->__to_fill_y[ base ] = y_ref;
+        __c_buffer->__to_fill[ base ] = ref;
+        if( x_ref == -1 && y_ref == -1 )
+            printf(" to fill \n ");
+        
+    }
     
 }
 
-__global__ void fill_mask( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buffer, int* __c_exec_count, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y, int* __prep_exec_list_x, int* __prep_exec_list_y ) {
+__global__ void fill_mask( int k, __c_ibis* __c_buffer, int exec_count ) {
     int index = blockIdx.x * CUDA_C + threadIdx.x;
     
     if( index >= exec_count )
         return;
     
-    int x_ref = __c_exec_list_x[ index ];
-    int y_ref = __c_exec_list_y[ index ];
-    if( x_ref == 0 || y_ref == 0 ) {
-        //printf(" x_ref || y_ref == 0 %i, %i \n", blockIdx.x, threadIdx.x );
-        return;
-    }
-    
+    int x_ref = __c_buffer->__to_fill_x[ index ];
+    int y_ref = __c_buffer->__to_fill_y[ index ];
     int ref = __c_buffer->__to_fill[ index ];
-    if( ref < 0 ) {
-        if( k > 0 ) {
-            int base = atomicAdd( __c_exec_count, 4 );
-            
-            __prep_exec_list_y[ base + 0 ] = y_ref;
-            __prep_exec_list_y[ base + 1 ] = y_ref;
-            __prep_exec_list_y[ base + 2 ] = y_ref + __design_size[ k - 1 ];
-            __prep_exec_list_y[ base + 3 ] = y_ref + __design_size[ k - 1 ];
-            
-            __prep_exec_list_x[ base + 0 ] = x_ref;
-            __prep_exec_list_x[ base + 1 ] = x_ref + __design_size[ k - 1 ];
-            __prep_exec_list_x[ base + 2 ] = x_ref;
-            __prep_exec_list_x[ base + 3 ] = x_ref + __design_size[ k - 1 ];
-        }
-        else {
-            int base = atomicAdd( __c_exec_count, 4 );
-            
-        }
-        
-        return;
-        
-    }
-    
-    //printf(" fill %i, %i \n", blockIdx.x, threadIdx.x );
-    
-    __c_buffer->__to_fill[ index ] = -1;
-    
+
     int x;
     int y;
     int index_xy;
@@ -1136,53 +1131,88 @@ __global__ void fill_mask( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buffe
 
 }
 
+__global__ void split_mask( int k, __c_ibis* __c_buffer, int* __c_exec_count, int exec_count, int* __prep_exec_list_x, int* __prep_exec_list_y ) {
+    int index = blockIdx.x * CUDA_C + threadIdx.x;
+    
+    if( index >= exec_count )
+        return;
+    
+    int x_ref = __c_buffer->__to_split_x[ index ];
+    int y_ref = __c_buffer->__to_split_y[ index ];
+    
+    if( x_ref == -1 && y_ref == -1 )
+        printf(" index: %i, split x: %i, y: %i \n", index, x_ref, y_ref);
+    
+    if( k > 0 ) {
+        int base = atomicAdd( __c_exec_count, 4 );
+        
+        __prep_exec_list_y[ base + 0 ] = y_ref;
+        __prep_exec_list_y[ base + 1 ] = y_ref;
+        __prep_exec_list_y[ base + 2 ] = y_ref + __design_size[ k - 1 ];
+        __prep_exec_list_y[ base + 3 ] = y_ref + __design_size[ k - 1 ];
+        
+        __prep_exec_list_x[ base + 0 ] = x_ref;
+        __prep_exec_list_x[ base + 1 ] = x_ref + __design_size[ k - 1 ];
+        __prep_exec_list_x[ base + 2 ] = x_ref;
+        __prep_exec_list_x[ base + 3 ] = x_ref + __design_size[ k - 1 ];
+        
+    }
+    else {
+        int base = atomicAdd( __c_exec_count, 1 );
+        __prep_exec_list_y[ base + 0 ] = y_ref;
+        __prep_exec_list_x[ base + 0 ] = x_ref;
+        
+    }
+    
+}
+
 //--------------------------------------------------------------------------------CUDA
 
+void set_grid_block_dim( int* __g_dim, int* __t_dim, int ref_t, int value ) {
+    *__g_dim = int( value / ref_t );
+    *__t_dim = value % ref_t;
+        
+    if( *__g_dim > 0 ) {
+        if( *__t_dim > 0 )
+            *__g_dim++;
+            
+        *__t_dim = ref_t;
+        
+    }
+    else {
+        *__g_dim = 1;
+        *__t_dim = value;
+        
+    }
+    
+}
+
 void IBIS::mask_propagate_SP() {
-#if MASK_chrono
+#if OUTPUT_log
     double lap;
 #endif
     st2=0;
     
-    int __g_dim;
-    int __t_dim;
+    int __g_dim_assign;
+    int __t_dim_assign;
     
-    int __g_dim_sp = int( SPNumber / CUDA_SP );
-    int __t_dim_sp = SPNumber % CUDA_SP;
-        
-    if( __g_dim_sp > 0 ) {
-        if( __t_dim_sp > 0 )
-            __g_dim_sp++;
-            
-        __t_dim_sp = CUDA_SP;
-        
-    }
-    else {
-        __g_dim_sp = 1;
-        __t_dim_sp = SPNumber;
-        
-    }
+    int __g_dim_fill;
+    int __t_dim_fill;
     
-    int __g_dim_size = int( size / CUDA_C );
-    int __t_dim_size = size % CUDA_C;
+    int __g_dim_split;
+    int __t_dim_split;
     
-    if( __g_dim_size > 0 ) {
-        if( __t_dim_size > 0 )
-            __g_dim_size++;
-            
-        __t_dim_size = CUDA_C;
-        
-    }
-    else {
-        __g_dim_size = 1;
-        __t_dim_size = size;
-        
-    }
+    int __g_dim_sp;
+    int __t_dim_sp;
+    
+    set_grid_block_dim( &__g_dim_sp, &__t_dim_sp, CUDA_SP, SPNumber );
     
     // main loop
     for( int k=index_mask-1; k>=0; k--) {
-    
-#if MASK_chrono
+        
+        printf( " |-> ---- ---- ---- <-| \n" );
+        
+#if OUTPUT_log
         lap = now_ms();
 #endif
         
@@ -1201,32 +1231,42 @@ void IBIS::mask_propagate_SP() {
         }
         
         SAFE_C( cudaMemset( __c_exec_count, 0, sizeof(int) ), "cudaMemset" );
+        SAFE_C( cudaMemset( __c_fill, 0, sizeof(int) ), "cudaMemset" );
+        SAFE_C( cudaMemset( __c_split, 0, sizeof(int) ), "cudaMemset" );
         
-        __g_dim = int( exec_count / CUDA_C );
-        __t_dim = exec_count % CUDA_C;
-        
-        if( __g_dim > 0 ) {
-            if( __t_dim > 0 )
-                __g_dim++;
-                
-            __t_dim = CUDA_C;
-            
-        }
-        else {
-            __g_dim = 1;
-            __t_dim = exec_count;
-            
-        }
-        
-        printf(" || -- iteration %i : %i \n", k, exec_count);
-        printf(" |-> iteration (%i ; %i,%i) => %i \n", __g_dim, __t_dim, masks[ k ].size_to_assign, __t_dim * masks[ k ].size_to_assign );
+        set_grid_block_dim( &__g_dim_assign, &__t_dim_assign, CUDA_C, exec_count );
+        printf(" || -- iteration %i : %i / %i = %f \n", k, exec_count, masks_pos[k].total_count, float(exec_count)/float(masks_pos[k].total_count)*100);
+        printf(" |-> assign_px (%i ; %i,%i) => %i \n", __g_dim_assign, __t_dim_assign, masks[ k ].size_to_assign, __t_dim_assign * masks[ k ].size_to_assign );
 
         // assign px
-        assign_px <<< __g_dim, dim3( __t_dim, masks[ k ].size_to_assign ) >>> ( __c_masks_pos, k, __c_buffer, exec_count, __c_exec_list_x, __c_exec_list_y );
+        assign_px <<< __g_dim_assign, dim3( __t_dim_assign, masks[ k ].size_to_assign ) >>> ( k, __c_buffer, exec_count, __c_exec_list_x, __c_exec_list_y );
         SAFE_KER( cudaPeekAtLastError() );
         SAFE_KER( cudaDeviceSynchronize() );
         
         // check borders
+        check_boundaries <<< __g_dim_assign, __t_dim_assign >>> ( k, __c_buffer, exec_count, __c_exec_list_x, __c_exec_list_y, __c_split, __c_fill );
+        SAFE_KER( cudaPeekAtLastError() );
+        SAFE_KER( cudaDeviceSynchronize() );
+        
+        cudaMemcpy( &split_count, __c_split, sizeof( int ), cudaMemcpyDeviceToHost );
+        cudaMemcpy( &fill_count, __c_fill, sizeof( int ), cudaMemcpyDeviceToHost );
+        
+        printf( " |-> ---- to_fill : %i ; ---- to split : %i \n", fill_count, split_count );
+        
+        set_grid_block_dim( &__g_dim_fill, &__t_dim_fill, CUDA_C, fill_count );
+        set_grid_block_dim( &__g_dim_split, &__t_dim_split, CUDA_C, split_count );
+        
+        // fill labels
+        fill_mask <<< __g_dim_fill, __t_dim_fill >>> ( k, __c_buffer, fill_count );
+        SAFE_KER( cudaPeekAtLastError() );
+        SAFE_KER( cudaDeviceSynchronize() );
+        
+        // fill labels
+        split_mask <<< __g_dim_split, __t_dim_split >>> ( k, __c_buffer, __c_exec_count, split_count, __prep_exec_list_x, __prep_exec_list_y );
+        SAFE_KER( cudaPeekAtLastError() );
+        SAFE_KER( cudaDeviceSynchronize() );
+        
+        /*// check borders
         check_boundaries <<< __g_dim, __t_dim >>> ( __c_masks_pos, k, __c_buffer, exec_count, __c_exec_list_x, __c_exec_list_y );
         SAFE_KER( cudaPeekAtLastError() );
         SAFE_KER( cudaDeviceSynchronize() );
@@ -1234,7 +1274,7 @@ void IBIS::mask_propagate_SP() {
         // fill labels
         fill_mask <<< __g_dim, __t_dim >>> ( __c_masks_pos, k, __c_buffer, __c_exec_count, exec_count, __c_exec_list_x, __c_exec_list_y, __prep_exec_list_x, __prep_exec_list_y );
         SAFE_KER( cudaPeekAtLastError() );
-        SAFE_KER( cudaDeviceSynchronize() );
+        SAFE_KER( cudaDeviceSynchronize() );*/
         
 #if STEP > 1
         if( k == 0 ) {
@@ -1252,46 +1292,17 @@ void IBIS::mask_propagate_SP() {
             cudaMemcpy( __c_exec_list_x, __prep_exec_list_x, sizeof( int ) * exec_count, cudaMemcpyDeviceToDevice );
             cudaMemcpy( __c_exec_list_y, __prep_exec_list_y, sizeof( int ) * exec_count, cudaMemcpyDeviceToDevice );
             
-            __g_dim = int( exec_count / CUDA_C );
-            __t_dim = exec_count % CUDA_C;
-            
-            if( __g_dim > 0 ) {
-                if( __t_dim > 0 )
-                    __g_dim++;
-                    
-                __t_dim = CUDA_C;
-                
-            }
-            else {
-                __g_dim = 1;
-                __t_dim = exec_count;
-                
-            }
-            
+            set_grid_block_dim( &__g_dim_assign, &__t_dim_assign, CUDA_C, exec_count );
             printf(" || -- iteration %i : %i \n", k, exec_count);
-            printf(" |-> assign_last (%i ; %i,%i) \n", __g_dim, __t_dim, __count_last );
+            printf(" |-> assign_last (%i ; %i,%i) \n", __g_dim_assign, __t_dim_assign, __count_last );
             
             // assign last
-            assign_last <<< __g_dim, dim3( __t_dim, __count_last ) >>> ( __c_masks_pos, k, __c_buffer, exec_count, __c_exec_list_x, __c_exec_list_y );
+            assign_last <<< __g_dim_assign, dim3( __t_dim_assign, __count_last ) >>> ( __c_masks_pos, k, __c_buffer, exec_count, __c_exec_list_x, __c_exec_list_y );
             
             SAFE_KER( cudaPeekAtLastError() );
             SAFE_KER( cudaDeviceSynchronize() );
             
         }
-#endif
-
-#if MASK_chrono
-        st2 += now_ms() - lap;
-#endif
-
-#if VISU
-        cudaMemcpy( labels, __h_buffer->__labels, size * sizeof( int ), cudaMemcpyDeviceToHost );
-        cudaMemcpy( processed, __h_buffer->__proc, size * sizeof( int ), cudaMemcpyDeviceToHost );
-        
-        imagesc( std::string("labels"), labels, width, height );
-        imagesc( std::string("processed"), processed, width, height );
-        
-        cvWaitKey( 0 );
 #endif
 
         if(k > 0) {
@@ -1304,7 +1315,26 @@ void IBIS::mask_propagate_SP() {
             SAFE_KER( cudaDeviceSynchronize() );
         
         }
+
+#if OUTPUT_log
+        st2 += now_ms() - lap;
+#endif
+
+#if VISU
+        cudaMemcpy( labels, __h_buffer->__labels, size * sizeof( int ), cudaMemcpyDeviceToHost );
+        cudaMemcpy( processed, __h_buffer->__proc, size * sizeof( int ), cudaMemcpyDeviceToHost );
+        
+        imagesc( std::string("labels"), labels, width, height );
+        imagesc( std::string("processed"), processed, width, height );
+        
+        cvWaitKey( 0 );
+#endif
+        
+        printf( " |-> ---- ---- ---- <-| \n" );
+        printf( " \n" );
         
     }
+    
+    cudaMemcpy( labels, __h_buffer->__labels, size * sizeof( int ), cudaMemcpyDeviceToHost );
     
 }
