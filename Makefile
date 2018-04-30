@@ -14,7 +14,7 @@ OPENCVFLAGS=`pkg-config --cflags opencv`
 OPENCVLIBS=`pkg-config --libs opencv`
 #OPENGLLIBS= -lglut -lGL -lGLU -lGLEW
 
-CFLAGS=  -std=c++11#-ggdb
+CFLAGS=  -std=c++11 -O3#-ggdb
 LIBS=-lpthread -lvisionworks
 
 SRC_DIR= src

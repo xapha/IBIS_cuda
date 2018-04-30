@@ -33,9 +33,10 @@
 #define size_roi            9       // 9 25 49 : consider adjacent seeds for pixels assignation
 #define MATLAB_lab          0       // 0=>RGB2LAB : l,a,b -> 0-255. 1=>RGB2LAB : l -> 0-100; a,b -> -127:127
 #define MASK_chrono         0       // 0:1 provide more informations ( complexity, process burden repartition ) : slow down the process !
-#define VISU                1       // show processed pixels for each iterations
+#define VISU                0       // show processed pixels for each iterations
 #define VISU_all            0       // for mask by mask visu of the processing : THREAD_count = 0, very slow
 #define OUTPUT_log          1       // 0:1 print output log
+#define KERNEL_log          0
 
 #define STEP                2
 
@@ -48,7 +49,7 @@
 #define KCYN  "\x1B[36m"
 #define KWHT  "\x1B[37m"
 
-#define CUDA_C      16
+#define CUDA_C      32
 #define CUDA_SP     32
 
 // mask level max 6 => 49504 o / 65 Ko
@@ -119,9 +120,10 @@ typedef struct mask_apply {
 
 } mask_apply;
 
-
 void generate_mask( int k, int step, mask_design* masks, int* check_x, int* check_y, int* assign_x, int* assign_y );
+
 void generate_coord_mask( mask_design* masks, mask_apply* masks_pos, int width, int height );
+
 void set_grid_block_dim( int* __g_dim, int* __t_dim, int ref_t, int value );
 
 typedef struct __c_ibis {
