@@ -562,6 +562,8 @@ void IBIS::init() {
     
     index_mask--;
     
+    //index_mask = 1;
+    
     if( index_mask > 6 )
         index_mask = 6;
     
@@ -1047,8 +1049,6 @@ __global__ void fill_mask( int k, __c_ibis* __c_buffer, int exec_count ) {
 
     //printf(" <----- to fill[ %i ] = ( %i, %i ): %i\n", index, x_ref, y_ref, ref);
 
-    int x;
-    int y;
     int index_xy;
     float __tmp_l = 0.f;
     float __tmp_a = 0.f;
@@ -1056,8 +1056,10 @@ __global__ void fill_mask( int k, __c_ibis* __c_buffer, int exec_count ) {
     float __tmp_x = 0.f;
     float __tmp_y = 0.f;
     
-    // fill labels
-    int ii = 0;
+    // fill labels -- initial solution : ( 2500 20 FHD ) = 22 : 1.5 -> 7.5
+    /*int ii = 0;
+    int x;
+    int y;
     for( int i=0; i<=__design_size[ k ]; i++ ) {
         y = y_ref + i;
         
@@ -1093,7 +1095,74 @@ __global__ void fill_mask( int k, __c_ibis* __c_buffer, int exec_count ) {
     atomicAdd( &__c_buffer->__ys_s[ ref ], __tmp_y );
     atomicAdd( &__c_buffer->__ls_s[ ref ], __tmp_l );
     atomicAdd( &__c_buffer->__as_s[ ref ], __tmp_a );
-    atomicAdd( &__c_buffer->__bs_s[ ref ], __tmp_b );
+    atomicAdd( &__c_buffer->__bs_s[ ref ], __tmp_b );*/
+    
+    // fill limit
+    int ii = 0;
+    int i_max = __design_size[ k ];
+    int j_max = __design_size[ k ];
+    int index_y;
+    
+    if( y_ref + i_max >= __c_height )
+        i_max = __c_height - y_ref;
+    
+    if( x_ref + j_max >= __c_width )
+        j_max = __c_width - x_ref;
+    
+    for( int i=y_ref; i<=y_ref+i_max; i++ ) {
+        index_y = i * __c_width;
+        
+        for( int j=x_ref; j<=x_ref+j_max; j++ ) {
+            index_xy = index_y + j;
+            
+            if( __c_buffer->__labels[ index_xy ] < 0 ) {
+                __c_buffer->__labels[ index_xy ] = ref;
+                
+                __tmp_l += __c_buffer->__l_vec[ index_xy ];
+                __tmp_a += __c_buffer->__a_vec[ index_xy ];
+                __tmp_b += __c_buffer->__b_vec[ index_xy ];
+                __tmp_x += j;
+                __tmp_y += i;
+                ii++;
+            
+            }
+        
+        }
+    
+    }
+    
+    // shared decomposed sum
+    extern __shared__ float seeds_sum[];
+    
+    seeds_sum[ threadIdx.x * 7 + 0 ] = ref;
+    seeds_sum[ threadIdx.x * 7 + 1 ] = ii;
+    seeds_sum[ threadIdx.x * 7 + 2 ] = __tmp_x;
+    seeds_sum[ threadIdx.x * 7 + 3 ] = __tmp_y;
+    seeds_sum[ threadIdx.x * 7 + 4 ] = __tmp_l;
+    seeds_sum[ threadIdx.x * 7 + 5 ] = __tmp_a;
+    seeds_sum[ threadIdx.x * 7 + 6 ] = __tmp_b;
+    
+    __syncthreads();
+    
+    // attribute ref
+    /*if( threadIdx.x == 0 ) {
+        
+        
+    }*/
+    
+    if( threadIdx.x == 0 ) {
+        for( int i=0; i<blockDim.x; i++ ) {
+            ref = int( seeds_sum[ i * 7 + 0 ] );
+            atomicAdd( &__c_buffer->__c_px[ ref ], seeds_sum[ i * 7 + 1 ] );
+            atomicAdd( &__c_buffer->__xs_s[ ref ], seeds_sum[ i * 7 + 2 ] );
+            atomicAdd( &__c_buffer->__ys_s[ ref ], seeds_sum[ i * 7 + 3 ] );
+            atomicAdd( &__c_buffer->__ls_s[ ref ], seeds_sum[ i * 7 + 4 ] );
+            atomicAdd( &__c_buffer->__as_s[ ref ], seeds_sum[ i * 7 + 5 ] );
+            atomicAdd( &__c_buffer->__bs_s[ ref ], seeds_sum[ i * 7 + 6 ] );
+        
+        }
+        
+    }
     
 }
 
@@ -1232,14 +1301,15 @@ void IBIS::mask_propagate_SP() {
         printf("  |-> ---- to_fill : %i ; ---- to split : %i \n", fill_count, split_count );
 #endif
         
-        set_grid_block_dim( &__g_dim_fill, &__t_dim_fill, 32, fill_count );
+        set_grid_block_dim( &__g_dim_fill, &__t_dim_fill, 128, fill_count );
         set_grid_block_dim( &__g_dim_split, &__t_dim_split, 1024, split_count );
         
         // fill labels
 #if KERNEL_log
-        printf("  |-> fill_mask ( (%i, %i, %i ) ; %i) => %i \n", __g_dim_fill, masks[k].size + 1, masks[k].size + 1, __t_dim_fill, __t_dim_fill * __g_dim_fill * ( masks[k].size + 1 ) * ( masks[k].size + 1 ) );
+        printf("  |-> fill_mask (%i ; %i) => %i \n", __g_dim_fill, __t_dim_fill, __t_dim_fill * __g_dim_fill );
 #endif
-        fill_mask <<< __g_dim_fill, __t_dim_fill >>> ( k, __c_buffer, fill_count );
+        int shm_size = ( sizeof( float ) * 7 * 128 ) + 4;
+        fill_mask <<< __g_dim_fill, __t_dim_fill, shm_size >>> ( k, __c_buffer, fill_count );
 #if KERNEL_log
         SAFE_KER( cudaPeekAtLastError() );
         SAFE_KER( cudaDeviceSynchronize() );
@@ -1260,16 +1330,6 @@ void IBIS::mask_propagate_SP() {
         SAFE_KER( cudaPeekAtLastError() );
         SAFE_KER( cudaDeviceSynchronize() );
 #endif
-        
-        /*// check borders
-        check_boundaries <<< __g_dim, __t_dim >>> ( __c_masks_pos, k, __c_buffer, exec_count, __c_exec_list_x, __c_exec_list_y );
-        SAFE_KER( cudaPeekAtLastError() );
-        SAFE_KER( cudaDeviceSynchronize() );
-        
-        // fill labels
-        fill_mask <<< __g_dim, __t_dim >>> ( __c_masks_pos, k, __c_buffer, __c_exec_count, exec_count, __c_exec_list_x, __c_exec_list_y, __prep_exec_list_x, __prep_exec_list_y );
-        SAFE_KER( cudaPeekAtLastError() );
-        SAFE_KER( cudaDeviceSynchronize() );*/
         
 #if STEP > 1
         if( k == 0 ) {
