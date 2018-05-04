@@ -1130,39 +1130,13 @@ __global__ void fill_mask( int k, __c_ibis* __c_buffer, int exec_count ) {
         }
     
     }
-    
-    // shared decomposed sum
-    extern __shared__ float seeds_sum[];
-    
-    seeds_sum[ threadIdx.x * 7 + 0 ] = ref;
-    seeds_sum[ threadIdx.x * 7 + 1 ] = ii;
-    seeds_sum[ threadIdx.x * 7 + 2 ] = __tmp_x;
-    seeds_sum[ threadIdx.x * 7 + 3 ] = __tmp_y;
-    seeds_sum[ threadIdx.x * 7 + 4 ] = __tmp_l;
-    seeds_sum[ threadIdx.x * 7 + 5 ] = __tmp_a;
-    seeds_sum[ threadIdx.x * 7 + 6 ] = __tmp_b;
-    
-    __syncthreads();
-    
-    // attribute ref
-    /*if( threadIdx.x == 0 ) {
-        
-        
-    }*/
-    
-    if( threadIdx.x == 0 ) {
-        for( int i=0; i<blockDim.x; i++ ) {
-            ref = int( seeds_sum[ i * 7 + 0 ] );
-            atomicAdd( &__c_buffer->__c_px[ ref ], seeds_sum[ i * 7 + 1 ] );
-            atomicAdd( &__c_buffer->__xs_s[ ref ], seeds_sum[ i * 7 + 2 ] );
-            atomicAdd( &__c_buffer->__ys_s[ ref ], seeds_sum[ i * 7 + 3 ] );
-            atomicAdd( &__c_buffer->__ls_s[ ref ], seeds_sum[ i * 7 + 4 ] );
-            atomicAdd( &__c_buffer->__as_s[ ref ], seeds_sum[ i * 7 + 5 ] );
-            atomicAdd( &__c_buffer->__bs_s[ ref ], seeds_sum[ i * 7 + 6 ] );
-        
-        }
-        
-    }
+
+    atomicAdd( &__c_buffer->__c_px[ ref ], ii );
+    atomicAdd( &__c_buffer->__xs_s[ ref ], __tmp_x );
+    atomicAdd( &__c_buffer->__ys_s[ ref ], __tmp_y );
+    atomicAdd( &__c_buffer->__ls_s[ ref ], __tmp_l );
+    atomicAdd( &__c_buffer->__as_s[ ref ], __tmp_a );
+    atomicAdd( &__c_buffer->__bs_s[ ref ], __tmp_b );
     
 }
 
@@ -1272,7 +1246,7 @@ void IBIS::mask_propagate_SP() {
         SAFE_C( cudaMemset( __c_fill, 0, sizeof(int) ), "cudaMemset" );
         SAFE_C( cudaMemset( __c_split, 0, sizeof(int) ), "cudaMemset" );
         
-        set_grid_block_dim( &__g_dim_assign, &__t_dim_assign, 32, exec_count );
+        set_grid_block_dim( &__g_dim_assign, &__t_dim_assign, 128, exec_count );
 #if KERNEL_log
         printf(" || -- iteration %i : %i / %i = %f \n", k, exec_count, masks_pos[k].total_count, float(exec_count)/float(masks_pos[k].total_count)*100);
         printf("  |-> assign_px (%i, %i ; %i) => %i \n", __g_dim_assign, masks[ k ].size_to_assign, __t_dim_assign, __t_dim_assign * masks[ k ].size_to_assign );
@@ -1287,6 +1261,7 @@ void IBIS::mask_propagate_SP() {
 #endif
         
         // check borders
+        set_grid_block_dim( &__g_dim_assign, &__t_dim_assign, 256, exec_count );
         check_boundaries <<< __g_dim_assign, __t_dim_assign >>> ( k, __c_buffer, exec_count, __c_exec_list_x, __c_exec_list_y, __c_split, __c_fill );
         
 #if KERNEL_log
@@ -1301,15 +1276,15 @@ void IBIS::mask_propagate_SP() {
         printf("  |-> ---- to_fill : %i ; ---- to split : %i \n", fill_count, split_count );
 #endif
         
-        set_grid_block_dim( &__g_dim_fill, &__t_dim_fill, 128, fill_count );
-        set_grid_block_dim( &__g_dim_split, &__t_dim_split, 1024, split_count );
+        set_grid_block_dim( &__g_dim_fill, &__t_dim_fill, 8, fill_count );
+        set_grid_block_dim( &__g_dim_split, &__t_dim_split, 256, split_count );
         
         // fill labels
 #if KERNEL_log
         printf("  |-> fill_mask (%i ; %i) => %i \n", __g_dim_fill, __t_dim_fill, __t_dim_fill * __g_dim_fill );
 #endif
-        int shm_size = ( sizeof( float ) * 7 * 128 ) + 4;
-        fill_mask <<< __g_dim_fill, __t_dim_fill, shm_size >>> ( k, __c_buffer, fill_count );
+
+        fill_mask <<< __g_dim_fill, __t_dim_fill >>> ( k, __c_buffer, fill_count );
 #if KERNEL_log
         SAFE_KER( cudaPeekAtLastError() );
         SAFE_KER( cudaDeviceSynchronize() );
