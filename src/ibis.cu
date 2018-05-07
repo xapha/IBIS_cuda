@@ -173,6 +173,9 @@ IBIS::IBIS(int _maxSPNum, int _compacity ) {
     Xseeds_init = new float[maxSPNumber];
     Yseeds_init = new float[maxSPNumber];
 
+    cudaMalloc( (void**) &__c_Xseeds_init, maxSPNumber*sizeof(float) );
+    cudaMalloc( (void**) &__c_Yseeds_init, maxSPNumber*sizeof(float) );
+
     /*Xseeds_Sum = new float[maxSPNumber];
     Yseeds_Sum = new float[maxSPNumber];
     lseeds_Sum = new float[maxSPNumber];
@@ -233,6 +236,9 @@ IBIS::~IBIS() {
     delete[] Xseeds_init;
     delete[] Yseeds_init;
 
+    cudaFree( __c_Xseeds_init );
+    cudaFree( __c_Yseeds_init );
+    
     /*delete[] Xseeds_Sum;
     delete[] Yseeds_Sum;
     delete[] lseeds_Sum;
@@ -256,6 +262,10 @@ IBIS::~IBIS() {
     delete[] initial_repartition;
     delete[] processed;
     
+    SAFE_C( cudaFreeHost( __h_R ), "free bseeds" );
+    SAFE_C( cudaFreeHost( __h_G ), "free bseeds" );
+    SAFE_C( cudaFreeHost( __h_B ), "free bseeds" );
+    
     // cuda
     cudaFree( __h_buffer->__c_px );
     cudaFree( __h_buffer->__xs );
@@ -263,6 +273,9 @@ IBIS::~IBIS() {
     cudaFree( __h_buffer->__ls );
     cudaFree( __h_buffer->__as );
     cudaFree( __h_buffer->__bs );
+    
+    cudaFree( __h_buffer->__lab );
+    
     cudaFree( __h_buffer->__xs_s );
     cudaFree( __h_buffer->__ys_s );
     cudaFree( __h_buffer->__ls_s );
@@ -293,6 +306,14 @@ IBIS::~IBIS() {
     
     cudaFree( __prep_exec_list_x );
     cudaFree( __prep_exec_list_y );
+    
+    cudaFree( __c_R );
+    cudaFree( __c_G );
+    cudaFree( __c_B );
+    
+    cudaFree( __prep_exec_list_y );
+    cudaFree( __prep_exec_list_y );
+    
     
     //cudaFree( __c_buffer );
     //free( __h_buffer );
@@ -641,6 +662,8 @@ void IBIS::init() {
     SAFE_C( cudaMalloc( (void**) &__h_buffer->__a_vec, sizeof( float ) * size ), "cudaMalloc");
     SAFE_C( cudaMalloc( (void**) &__h_buffer->__b_vec, sizeof( float ) * size ), "cudaMalloc");
     
+    SAFE_C( cudaMalloc( (void**) &__h_buffer->__lab, sizeof( float ) * size * 3 ), "cudaMalloc");
+    
     SAFE_C( cudaMalloc( (void**) &__c_exec_list_x, sizeof( int ) * size ), "cudaMalloc");
     SAFE_C( cudaMalloc( (void**) &__c_exec_list_y, sizeof( int ) * size ), "cudaMalloc");
     
@@ -652,6 +675,15 @@ void IBIS::init() {
     SAFE_C( cudaMalloc( (void**) &__c_exec_count, sizeof( int ) ), "cudaMalloc" );
     SAFE_C( cudaMalloc( (void**) &__c_fill, sizeof( int ) ), "cudaMalloc" );
     SAFE_C( cudaMalloc( (void**) &__c_split, sizeof( int ) ), "cudaMalloc" );
+    
+    // RGB to LAB
+    cudaMallocHost( (void**)&__h_R, sizeof(float) * size );
+    cudaMallocHost( (void**)&__h_G, sizeof(float) * size );
+    cudaMallocHost( (void**)&__h_B, sizeof(float) * size );
+    
+    SAFE_C( cudaMalloc( (void**) &__c_R, sizeof( float ) * size ), "cudaMalloc" );
+    SAFE_C( cudaMalloc( (void**) &__c_G, sizeof( float ) * size ), "cudaMalloc" );
+    SAFE_C( cudaMalloc( (void**) &__c_B, sizeof( float ) * size ), "cudaMalloc" );
     
 }
 
@@ -682,9 +714,6 @@ void IBIS::reset() {
     memset( Xseeds_Sum, 0, sizeof( float ) * maxSPNumber );
     memset( Yseeds_Sum, 0, sizeof( float ) * maxSPNumber );
 
-    /*for( int i=0; i<count_mask; i++ )
-        mask_buffer[ i ].reset();*/
-
 }
 
 void IBIS::getLAB( cv::Mat* img ) {
@@ -704,12 +733,19 @@ void IBIS::getLAB( cv::Mat* img ) {
 #endif
         ii++;
     }
-
+    
+    //int index = 26894;
+    //printf(" -- ref -- (%i, %i, %i) = (%f, %f, %f)\n", img->ptr()[3*index + 2], img->ptr()[3*index + 1], img->ptr()[3*index], lvec[index], avec[index], bvec[index]);
+    
 }
 
 void IBIS::process( cv::Mat* img ) {
 
+#if OUTPUT_log
     double lap;
+#endif
+
+    int g_dim, t_dim;
 
     if( size == 0 ) {
         size = img->cols * img->rows;
@@ -721,20 +757,58 @@ void IBIS::process( cv::Mat* img ) {
 
         // STEP 1 : initialize with fix grid seeds value
         initSeeds();
-
+        
+        cudaMemcpy( __h_buffer->__adj_sp, adjacent_sp, maxSPNumber * size_roi * sizeof( int ), cudaMemcpyHostToDevice );
+        cudaMemcpy( __h_buffer->__c_adj, count_adjacent, maxSPNumber * sizeof( int ), cudaMemcpyHostToDevice );
+        cudaMemcpy( __h_buffer->__init_repa, initial_repartition, size * sizeof( int ), cudaMemcpyHostToDevice );
+        
+        cudaMemcpy( __c_Xseeds_init, Xseeds_init, maxSPNumber * sizeof( float ), cudaMemcpyHostToDevice );
+        cudaMemcpy( __c_Yseeds_init, Yseeds_init, maxSPNumber * sizeof( float ), cudaMemcpyHostToDevice );
+        
     }
+    
+    st2 = 0;
+    st3 = 0;
+    st4 = 0;
+    
+#if OUTPUT_log
+    lap = now_ms();
+#endif
+
+    int ii=0;
+    for (int i = 0; i < size * 3; i += 3) {
+        __h_B[ ii ] = img->ptr()[ i + 0 ];
+        __h_G[ ii ] = img->ptr()[ i + 1 ];
+        __h_R[ ii ] = img->ptr()[ i + 2 ];
+        
+        ii++;
+        
+    }
+    
+    cudaMemcpy( __c_R, __h_R, sizeof(float) * size, cudaMemcpyHostToDevice );
+    cudaMemcpy( __c_G, __h_G, sizeof(float) * size, cudaMemcpyHostToDevice );
+    cudaMemcpy( __c_B, __h_B, sizeof(float) * size, cudaMemcpyHostToDevice );
+
+    set_grid_block_dim( &g_dim, &t_dim, 32, size );
+    RGB2LAB <<< g_dim, t_dim >>> ( __c_R, __c_G, __c_B, __c_buffer, size );
+#if KERNEL_log
+        SAFE_KER( cudaPeekAtLastError() );
+        SAFE_KER( cudaDeviceSynchronize() );
+#endif
 
     // convert to Lab
-    getLAB( img );
-
-    // prepare value to compute a picture
-    reset();
+    //getLAB( img );
     
-    cudaMemcpy( __h_buffer->__xs, Xseeds, maxSPNumber * sizeof( float ), cudaMemcpyHostToDevice );
-    cudaMemcpy( __h_buffer->__ys, Yseeds, maxSPNumber * sizeof( float ), cudaMemcpyHostToDevice );
-    cudaMemcpy( __h_buffer->__ls, lseeds, maxSPNumber * sizeof( float ), cudaMemcpyHostToDevice );
-    cudaMemcpy( __h_buffer->__as, aseeds, maxSPNumber * sizeof( float ), cudaMemcpyHostToDevice );
-    cudaMemcpy( __h_buffer->__bs, bseeds, maxSPNumber * sizeof( float ), cudaMemcpyHostToDevice );
+    //cudaMemcpy( __h_buffer->__l_vec, lvec, sizeof(float) * size, cudaMemcpyHostToDevice );
+    //cudaMemcpy( __h_buffer->__a_vec, avec, sizeof(float) * size, cudaMemcpyHostToDevice );
+    //cudaMemcpy( __h_buffer->__b_vec, bvec, sizeof(float) * size, cudaMemcpyHostToDevice );
+
+    set_grid_block_dim( &g_dim, &t_dim, 32, SPNumber );
+    __c_reset <<< g_dim, t_dim >>> ( __c_Xseeds_init, __c_Yseeds_init, __c_buffer, SPNumber );
+#if KERNEL_log
+        SAFE_KER( cudaPeekAtLastError() );
+        SAFE_KER( cudaDeviceSynchronize() );
+#endif
     
     cudaMemset( __h_buffer->__c_px, 0, maxSPNumber * sizeof( float ) );
     cudaMemset( __h_buffer->__xs_s, 0, maxSPNumber * sizeof( float ) );
@@ -743,44 +817,23 @@ void IBIS::process( cv::Mat* img ) {
     cudaMemset( __h_buffer->__as_s, 0, maxSPNumber * sizeof( float ) );
     cudaMemset( __h_buffer->__bs_s, 0, maxSPNumber * sizeof( float ) );
     
-    //cudaMemcpy( __h_buffer->__c_px, countPx, maxSPNumber * sizeof( float ), cudaMemcpyHostToDevice );
-    //cudaMemcpy( __h_buffer->__xs_s, Xseeds_Sum, maxSPNumber * sizeof( float ), cudaMemcpyHostToDevice );
-    //cudaMemcpy( __h_buffer->__ys_s, Yseeds_Sum, maxSPNumber * sizeof( float ), cudaMemcpyHostToDevice );
-    //cudaMemcpy( __h_buffer->__ls_s, lseeds_Sum, maxSPNumber * sizeof( float ), cudaMemcpyHostToDevice );
-    //cudaMemcpy( __h_buffer->__as_s, aseeds_Sum, maxSPNumber * sizeof( float ), cudaMemcpyHostToDevice );
-    //cudaMemcpy( __h_buffer->__bs_s, bseeds_Sum, maxSPNumber * sizeof( float ), cudaMemcpyHostToDevice );
-    
-    cudaMemcpy( __h_buffer->__adj_sp, adjacent_sp, maxSPNumber * size_roi * sizeof( int ), cudaMemcpyHostToDevice );
-    cudaMemcpy( __h_buffer->__c_adj, count_adjacent, maxSPNumber * sizeof( int ), cudaMemcpyHostToDevice );
-    cudaMemcpy( __h_buffer->__init_repa, initial_repartition, size * sizeof( int ), cudaMemcpyHostToDevice );
-    
     cudaMemset( __h_buffer->__proc, 0, size * sizeof( int ) );
     cudaMemset( __h_buffer->__labels, -1, size * sizeof( int ) );
     cudaMemset( __h_buffer->__t_labels, -1, size * sizeof( int ) );
-    
-    //cudaMemcpy( __h_buffer->__proc, processed, size * sizeof( int ), cudaMemcpyHostToDevice );
-    //cudaMemcpy( __h_buffer->__labels, labels, size * sizeof( int ), cudaMemcpyHostToDevice );
-    //cudaMemcpy( __h_buffer->__t_labels, labels, size * sizeof( int ), cudaMemcpyHostToDevice );
-    
-    cudaMemcpy( __h_buffer->__l_vec, lvec, size * sizeof( float ), cudaMemcpyHostToDevice );
-    cudaMemcpy( __h_buffer->__a_vec, avec, size * sizeof( float ), cudaMemcpyHostToDevice );
-    cudaMemcpy( __h_buffer->__b_vec, bvec, size * sizeof( float ), cudaMemcpyHostToDevice );
-    
-    // STEP 2 : process IBIS
+
 #if OUTPUT_log
+    st2 = now_ms() - lap;
     lap = now_ms();
 #endif
-    mask_propagate_SP();
 
+    // STEP 2 : process IBIS
+    mask_propagate_SP();
+    
 #if OUTPUT_log
     st3 = now_ms() - lap;
-#endif
-    
-    // STEP 3 : post processing
-#if OUTPUT_log
     lap = now_ms();
 #endif
-
+    // STEP 3 : post processing
     enforceConnectivity();
 
 #if OUTPUT_log
@@ -790,39 +843,42 @@ void IBIS::process( cv::Mat* img ) {
     // output log
 #if OUTPUT_log
     printf("-----------------\n");
-    printf("PERF_T %lf\n", st3+st4);
-    printf("IBIS.process\t\t%lf\t ms\n", st3);
-    printf("Kernel exec\t\t%lf\t ms\n", st2);
-    printf("IBIS.post_process\t%lf\t ms\n", st4);
-
-    #if MASK_chrono
-    float chrono[4] = { 0.f };
-    for( int i=0; i < count_mask; i++ )
-        mask_buffer[i].get_chrono( chrono );
-
-    float total_chrono = chrono[0] + chrono[1] + chrono[2] + st2;
-
-    printf("-----------------------------------\n");
-    printf("Pixels processed:\t%lf\t\%\n", get_complexity()*100 );
-    printf("-----------------\n");
-    printf("\tMASK.angular_assign()\t\t%lf \%\n", chrono[0]/total_chrono);
-    printf("\tMASK.fill_mask()\t\t%lf \%\n", chrono[1]/total_chrono);
-    printf("\tMASK.assign_last()\t\t%lf \%\n", chrono[2]/total_chrono);
-    printf("\tIBIS.mean_seeds()\t\t%lf \%\n", st2/total_chrono);
-
-    #if THREAD_count > 1
-    printf("-----------------\n");
-    printf("multi-thread accel:\t\t\t%lf times\n", total_chrono/st3);
-    printf("-----------------\n");
-    #endif
-
-    #endif
+    printf("PERF_T %lf\n", st3+st4+st2);
+    printf("gpu prec\t\t%lf\t ms\n", st2);
+    printf("gpu exec\t\t%lf\t ms\n", st3);
+    printf("cpu posc\t\t%lf\t ms\n", st4);
 
 #endif
 
 }
 
 //--------------------------------------------------------------------------------CUDA
+
+__global__ void __c_reset( float* __c_Xseeds_init, float* __c_Yseeds_init, __c_ibis* __c_buffer, int SPNumber ) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if( index >= SPNumber )
+        return;
+    
+    __c_buffer->__xs[ index ] = __c_Xseeds_init[ index ];
+    __c_buffer->__ys[ index ] = __c_Yseeds_init[ index ];
+    
+    int index_xy = (int) __c_Yseeds_init[ index ] * __c_width + __c_Xseeds_init[ index ];
+    
+    __c_buffer->__ls[ index ] = __c_buffer->__l_vec[ index_xy ];
+    __c_buffer->__as[ index ] = __c_buffer->__a_vec[ index_xy ];
+    __c_buffer->__bs[ index ] = __c_buffer->__b_vec[ index_xy ];
+    
+    /*if( index == 0 ) {
+    
+        printf(" %i : ( %f, %f ) = (%f, %f, %f) \n", index_xy, __c_buffer->__xs[ index ],
+                                                    __c_buffer->__ys[ index ],
+                                                    __c_buffer->__ls[ index ],
+                                                    __c_buffer->__as[ index ],
+                                                    __c_buffer->__bs[ index ] );
+                                                    
+    }*/
+    
+}
 
 __global__ void assign_last( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buffer, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y ) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
@@ -1198,11 +1254,6 @@ void set_grid_block_dim( int* __g_dim, int* __t_dim, int ref_t, int value ) {
 }
 
 void IBIS::mask_propagate_SP() {
-#if OUTPUT_log
-    double lap;
-#endif
-    st2=0;
-    
     int __g_dim_assign;
     int __t_dim_assign;
     
@@ -1224,11 +1275,6 @@ void IBIS::mask_propagate_SP() {
         printf( " |-> ---- ---- ---- <-| \n" );
 #endif
         
-#if OUTPUT_log
-        lap = now_ms();
-#endif
-        
-        //int cuda_c[8] = { 512, 171, 74, 35, 9, 5, 3, 2 };
         if( k == index_mask-1 ) {
             exec_count = masks_pos[ k ].total_count;
             cudaMemcpy( __c_exec_list_x, masks_pos[k].apply_x, sizeof( int ) * exec_count, cudaMemcpyDeviceToDevice );
@@ -1351,10 +1397,6 @@ void IBIS::mask_propagate_SP() {
 #endif
         
         }
-
-#if OUTPUT_log
-        st2 += now_ms() - lap;
-#endif
 
 #if VISU
         cudaMemcpy( labels, __h_buffer->__labels, size * sizeof( int ), cudaMemcpyDeviceToHost );

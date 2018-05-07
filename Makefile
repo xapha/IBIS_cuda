@@ -25,10 +25,10 @@ RM=rm -rf
 all: build
 
 build: $(OBJ_DIR) $(OBJ_DIR)/rgb2lab.o $(OBJ_DIR)/utils.o $(OBJ_DIR)/main.o $(OBJ_DIR)/ibis.o
-	$(CUDACC) -I /usr/include/opencv2 $(OBJ_DIR)/utils.o $(OBJ_DIR)/main.o $(OBJ_DIR)/ibis.o $(OPENCVLIBS) $(LIBS) -o IBIScuda --gpu-architecture=sm_53  --default-stream per-thread
+	$(CUDACC) -I /usr/include/opencv2 $(OBJ_DIR)/rgb2lab.o $(OBJ_DIR)/utils.o $(OBJ_DIR)/main.o $(OBJ_DIR)/ibis.o $(OPENCVLIBS) $(LIBS) -o IBIScuda --gpu-architecture=sm_53  --default-stream per-thread
 
 $(OBJ_DIR)/rgb2lab.o: $(SRC_DIR)/rgb2lab.cu
-	$(CXX) $(SRC_DIR)/rgb2lab.cu $(CUDAFLAGS) $(CFLAGS) -c -o $(OBJ_DIR)/rgb2lab.o
+	$(CUDACC) $(SRC_DIR)/rgb2lab.cu $(CUDAFLAGS) $(CFLAGS) -c -o $(OBJ_DIR)/rgb2lab.o --gpu-architecture=sm_53 --default-stream per-thread
 
 $(OBJ_DIR)/utils.o: $(SRC_DIR)/utils.cpp $(SRC_DIR)/utils.h
 	$(CXX) -I /usr/include/opencv2 $(SRC_DIR)/utils.cpp $(CUDAFLAGS) $(CFLAGS) -c -o $(OBJ_DIR)/utils.o

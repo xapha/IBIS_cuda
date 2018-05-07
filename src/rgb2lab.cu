@@ -1,42 +1,45 @@
 #include "ibis.cuh"
 
-__device__ void RGB2XYZ(
-	const int&		sR,
-	const int&		sG,
-	const int&		sB,
-	double&			X,
-	double&			Y,
-	double&			Z)
-{
-	double R = sR/255.0;
-	double G = sG/255.0;
-	double B = sB/255.0;
-
+//===========================================================================
+///	RGB2LAB
+//===========================================================================
+__global__ void RGB2LAB( float* R, float* G, float* B, __c_ibis* __c_buffer, int count_exec ) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    //printf(" %i / %i ", index, count_exec);
+    
+    if( index >= count_exec )
+        return;
+    
+	//------------------------
+	// sRGB to XYZ conversion
+	//------------------------
+	double sR = double( R[ index ] ) / 255;
+	double sG = double( G[ index ] ) / 255;
+	double sB = double( B[ index ] ) / 255;
+	
+	double X, Y, Z;
 	double r, g, b;
 
-	if(R <= 0.04045)	r = R/12.92;
-	else				r = pow((R+0.055)/1.055,2.4);
-	if(G <= 0.04045)	g = G/12.92;
-	else				g = pow((G+0.055)/1.055,2.4);
-	if(B <= 0.04045)	b = B/12.92;
-	else				b = pow((B+0.055)/1.055,2.4);
+	if(sR <= 0.04045)
+	    r = sR/12.92;
+	else
+	    r = powf((sR+0.055)/1.055,2.4);
+	
+	if(sG <= 0.04045)
+	    g = sG/12.92;
+	else
+	    g = powf((sG+0.055)/1.055,2.4);
+	
+	if(sB <= 0.04045)
+	    b = sB/12.92;
+	else
+	    b = powf((sB+0.055)/1.055,2.4);
 
 	X = r*0.4124564 + g*0.3575761 + b*0.1804375;
 	Y = r*0.2126729 + g*0.7151522 + b*0.0721750;
 	Z = r*0.0193339 + g*0.1191920 + b*0.9503041;
-}
-
-//===========================================================================
-///	RGB2LAB
-//===========================================================================
-__device__ void RGB2LAB(const int& sR, const int& sG, const int& sB, double& lval, double& aval, double& bval)
-{
-	//------------------------
-	// sRGB to XYZ conversion
-	//------------------------
-	double X, Y, Z;
-	RGB2XYZ(sR, sG, sB, X, Y, Z);
-
+	
 	//------------------------
 	// XYZ to LAB conversion
 	//------------------------
@@ -52,15 +55,26 @@ __device__ void RGB2LAB(const int& sR, const int& sG, const int& sB, double& lva
 	double zr = Z/Zr;
 
 	double fx, fy, fz;
-	if(xr > epsilon)	fx = pow(xr, 1.0/3.0);
-	else				fx = (kappa*xr + 16.0)/116.0;
-	if(yr > epsilon)	fy = pow(yr, 1.0/3.0);
-	else				fy = (kappa*yr + 16.0)/116.0;
-	if(zr > epsilon)	fz = pow(zr, 1.0/3.0);
-	else				fz = (kappa*zr + 16.0)/116.0;
+	if(xr > epsilon)
+	    fx = powf(xr, 1.0/3.0);
+	else
+	    fx = (kappa*xr + 16.0)/116.0;
+	
+	if(yr > epsilon)
+	    fy = powf(yr, 1.0/3.0);
+	else
+	    fy = (kappa*yr + 16.0)/116.0;
+	
+	if(zr > epsilon)
+	    fz = powf(zr, 1.0/3.0);
+	else
+	    fz = (kappa*zr + 16.0)/116.0;
 
-	lval = 116.0*fy-16.0;
-	aval = 500.0*(fx-fy);
-	bval = 200.0*(fy-fz);
+	__c_buffer->__l_vec[ index ] = ( float( 116.0*fy-16.0 ) / 100 ) * 255 ;
+	__c_buffer->__a_vec[ index ] = ( ( float( 500.0*(fx-fy) ) + 120 ) / 240 ) * 255 ;
+	__c_buffer->__b_vec[ index ] = ( ( float( 200.0*(fy-fz) ) + 120 ) / 240 ) * 255 ;
+	
+	//if( index == 26894 )
+	//    printf(" -- gpu -- (%i, %i, %i) = (%f, %f, %f) \n ", int( R[ index ] ), int( G[ index ] ), int( B[ index ] ), __c_buffer->__l_vec[ index ], __c_buffer->__a_vec[ index ], __c_buffer->__b_vec[ index ] );
 	
 }

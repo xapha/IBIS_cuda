@@ -128,11 +128,13 @@ void set_grid_block_dim( int* __g_dim, int* __t_dim, int ref_t, int value );
 
 typedef struct __c_ibis {
     float* __c_px;
+    
     float* __xs;
     float* __ys;
     float* __ls;
     float* __as;
     float* __bs;
+    
     float* __xs_s;
     float* __ys_s;
     float* __ls_s;
@@ -142,6 +144,8 @@ typedef struct __c_ibis {
     float* __l_vec;
     float* __a_vec;
     float* __b_vec;
+    
+    float* __lab;
     
     int* __adj_sp;
     int* __c_adj;
@@ -158,10 +162,8 @@ typedef struct __c_ibis {
     int* __to_split_y;
     
 } __c_ibis;
-
-__device__ void RGB2XYZ( const int& sR, const int& sG, const int& sB, double& X, double& Y, double& Z);
 	
-__device__ void RGB2LAB( const int& sR, const int& sG, const int& sB, double& lval, double& aval, double& bval );
+__global__ void RGB2LAB( float* R, float* G, float* B, __c_ibis* __c_buffer, int count_exec );
 
 __global__ void update_seeds( __c_ibis* ibis_data );
 
@@ -169,9 +171,7 @@ __global__ void assign_px( int k, __c_ibis* __c_buffer, int exec_count, int* __c
 
 __global__ void assign_last( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buffer, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y );
 
-//__global__ void check_boundaries( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buffer, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y );
-
-//__global__ void fill_mask( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buffer, int* __c_exec_count, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y, int* __prep_exec_list_x, int* __prep_exec_list_y );
+__global__ void __c_reset( float* __c_Xseeds_init, float* __c_Yseeds_init, __c_ibis* __c_buffer, int SPNumber );
 
 __global__ void check_boundaries( int k, __c_ibis* __c_buffer, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y, int* __c_split, int* __c_fill );
 
@@ -287,7 +287,19 @@ private:
     
     int* __c_split;
     int split_count;
-
+    
+    // RGB to LAB
+    float* __h_R;
+    float* __h_G;
+    float* __h_B;
+    
+    float* __c_R;
+    float* __c_G;
+    float* __c_B;
+    
+    float* __c_Xseeds_init;
+    float* __c_Yseeds_init;
+    
 public:
     double st2, st3, st4;
 
