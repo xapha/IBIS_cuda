@@ -146,6 +146,8 @@ typedef struct __c_ibis {
     float* __b_vec;
     
     float* __lab;
+    float* __seeds;
+    float* __seeds_s;
     
     int* __adj_sp;
     int* __c_adj;

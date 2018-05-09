@@ -70,9 +70,13 @@ __global__ void RGB2LAB( float* R, float* G, float* B, __c_ibis* __c_buffer, int
 	else
 	    fz = (kappa*zr + 16.0)/116.0;
 
-	__c_buffer->__l_vec[ index ] = ( float( 116.0*fy-16.0 ) / 100 ) * 255 ;
-	__c_buffer->__a_vec[ index ] = ( ( float( 500.0*(fx-fy) ) + 120 ) / 240 ) * 255 ;
-	__c_buffer->__b_vec[ index ] = ( ( float( 200.0*(fy-fz) ) + 120 ) / 240 ) * 255 ;
+//	__c_buffer->__l_vec[ index ] = ( float( 116.0*fy-16.0 ) / 100 ) * 255 ;
+//	__c_buffer->__a_vec[ index ] = ( ( float( 500.0*(fx-fy) ) + 120 ) / 240 ) * 255 ;
+//	__c_buffer->__b_vec[ index ] = ( ( float( 200.0*(fy-fz) ) + 120 ) / 240 ) * 255 ;
+	
+	__c_buffer->__lab[ 3*index + 0 ] = ( float( 116.0*fy-16.0 ) / 100 ) * 255 ;
+	__c_buffer->__lab[ 3*index + 1 ] = ( ( float( 500.0*(fx-fy) ) + 120 ) / 240 ) * 255 ;
+	__c_buffer->__lab[ 3*index + 2 ] = ( ( float( 200.0*(fy-fz) ) + 120 ) / 240 ) * 255 ;
 	
 	//if( index == 26894 )
 	//    printf(" -- gpu -- (%i, %i, %i) = (%f, %f, %f) \n ", int( R[ index ] ), int( G[ index ] ), int( B[ index ] ), __c_buffer->__l_vec[ index ], __c_buffer->__a_vec[ index ], __c_buffer->__b_vec[ index ] );

@@ -204,6 +204,10 @@ IBIS::IBIS(int _maxSPNum, int _compacity ) {
     cudaMalloc( (void**) &__h_buffer->__ls, maxSPNumber*sizeof(float) );
     cudaMalloc( (void**) &__h_buffer->__as, maxSPNumber*sizeof(float) );
     cudaMalloc( (void**) &__h_buffer->__bs, maxSPNumber*sizeof(float) );
+    
+    cudaMalloc( (void**) &__h_buffer->__seeds, maxSPNumber*sizeof(float) * 5 );
+    cudaMalloc( (void**) &__h_buffer->__seeds_s, maxSPNumber*sizeof(float) * 6 );
+    
     cudaMalloc( (void**) &__h_buffer->__xs_s, maxSPNumber*sizeof(float) );
     cudaMalloc( (void**) &__h_buffer->__ys_s, maxSPNumber*sizeof(float) );
     cudaMalloc( (void**) &__h_buffer->__ls_s, maxSPNumber*sizeof(float) );
@@ -275,6 +279,8 @@ IBIS::~IBIS() {
     cudaFree( __h_buffer->__bs );
     
     cudaFree( __h_buffer->__lab );
+    cudaFree( __h_buffer->__seeds );
+    cudaFree( __h_buffer->__seeds_s );
     
     cudaFree( __h_buffer->__xs_s );
     cudaFree( __h_buffer->__ys_s );
@@ -789,7 +795,7 @@ void IBIS::process( cv::Mat* img ) {
     cudaMemcpy( __c_G, __h_G, sizeof(float) * size, cudaMemcpyHostToDevice );
     cudaMemcpy( __c_B, __h_B, sizeof(float) * size, cudaMemcpyHostToDevice );
 
-    set_grid_block_dim( &g_dim, &t_dim, 32, size );
+    set_grid_block_dim( &g_dim, &t_dim, 128, size );
     RGB2LAB <<< g_dim, t_dim >>> ( __c_R, __c_G, __c_B, __c_buffer, size );
 #if KERNEL_log
         SAFE_KER( cudaPeekAtLastError() );
@@ -797,8 +803,10 @@ void IBIS::process( cv::Mat* img ) {
 #endif
 
     // convert to Lab
-    //getLAB( img );
-    
+    double plap = now_ms();
+//    getLAB( img );
+    plap = now_ms() - plap;
+
     //cudaMemcpy( __h_buffer->__l_vec, lvec, sizeof(float) * size, cudaMemcpyHostToDevice );
     //cudaMemcpy( __h_buffer->__a_vec, avec, sizeof(float) * size, cudaMemcpyHostToDevice );
     //cudaMemcpy( __h_buffer->__b_vec, bvec, sizeof(float) * size, cudaMemcpyHostToDevice );
@@ -809,6 +817,8 @@ void IBIS::process( cv::Mat* img ) {
         SAFE_KER( cudaPeekAtLastError() );
         SAFE_KER( cudaDeviceSynchronize() );
 #endif
+    
+    cudaMemset( __h_buffer->__seeds_s, 0, maxSPNumber * 6 * sizeof( float ) );
     
     cudaMemset( __h_buffer->__c_px, 0, maxSPNumber * sizeof( float ) );
     cudaMemset( __h_buffer->__xs_s, 0, maxSPNumber * sizeof( float ) );
@@ -833,6 +843,8 @@ void IBIS::process( cv::Mat* img ) {
     st3 = now_ms() - lap;
     lap = now_ms();
 #endif
+    cudaMemcpy( labels, __h_buffer->__labels, size * sizeof( int ), cudaMemcpyDeviceToHost );
+    
     // STEP 3 : post processing
     enforceConnectivity();
 
@@ -847,7 +859,7 @@ void IBIS::process( cv::Mat* img ) {
     printf("gpu prec\t\t%lf\t ms\n", st2);
     printf("gpu exec\t\t%lf\t ms\n", st3);
     printf("cpu posc\t\t%lf\t ms\n", st4);
-
+    printf("cpu lab\t\t%f\n", plap);
 #endif
 
 }
@@ -859,14 +871,14 @@ __global__ void __c_reset( float* __c_Xseeds_init, float* __c_Yseeds_init, __c_i
     if( index >= SPNumber )
         return;
     
-    __c_buffer->__xs[ index ] = __c_Xseeds_init[ index ];
-    __c_buffer->__ys[ index ] = __c_Yseeds_init[ index ];
+    __c_buffer->__seeds[ 5*index ] = __c_Xseeds_init[ index ];
+    __c_buffer->__seeds[ 5*index + 1 ] = __c_Yseeds_init[ index ];
     
     int index_xy = (int) __c_Yseeds_init[ index ] * __c_width + __c_Xseeds_init[ index ];
     
-    __c_buffer->__ls[ index ] = __c_buffer->__l_vec[ index_xy ];
-    __c_buffer->__as[ index ] = __c_buffer->__a_vec[ index_xy ];
-    __c_buffer->__bs[ index ] = __c_buffer->__b_vec[ index_xy ];
+    __c_buffer->__seeds[ 5*index + 2 ] = __c_buffer->__lab[ 3*index_xy ];
+    __c_buffer->__seeds[ 5*index + 3 ] = __c_buffer->__lab[ 3*index_xy + 1 ];
+    __c_buffer->__seeds[ 5*index + 4 ] = __c_buffer->__lab[ 3*index_xy + 2 ];
     
     /*if( index == 0 ) {
     
@@ -901,9 +913,9 @@ __global__ void assign_last( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buf
         
         int init_repart = __c_buffer->__init_repa[ index_xy ];
         
-        float l = __c_buffer->__l_vec[ index_xy ];
-        float a = __c_buffer->__a_vec[ index_xy ];
-        float b = __c_buffer->__b_vec[ index_xy ];
+        float l = __c_buffer->__lab[ 3*index_xy ];
+        float a = __c_buffer->__lab[ 3*index_xy + 1 ];
+        float b = __c_buffer->__lab[ 3*index_xy + 2 ];
         
         int best_sp = 0;
         int index_sp;
@@ -913,13 +925,18 @@ __global__ void assign_last( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buf
         
         for(int i=0; i<__c_buffer->__c_adj[ init_repart ]; i++) {
             index_sp = __c_buffer->__adj_sp[ size_roi * init_repart + i ];
+            float sx = __c_buffer->__seeds[ 5*index_sp + 0 ];
+            float sy = __c_buffer->__seeds[ 5*index_sp + 1 ];
+            float sl = __c_buffer->__seeds[ 5*index_sp + 2 ];
+            float sa = __c_buffer->__seeds[ 5*index_sp + 3 ];
+            float sb = __c_buffer->__seeds[ 5*index_sp + 4 ];
             
-            dist_lab = ( l - __c_buffer->__ls[ index_sp ]) * ( l - __c_buffer->__ls[ index_sp ]) +
-                       ( a - __c_buffer->__as[ index_sp ]) * ( a - __c_buffer->__as[ index_sp ]) +
-                       ( b - __c_buffer->__bs[ index_sp ]) * ( b - __c_buffer->__bs[ index_sp ]);
+            dist_lab = ( l - sl ) * ( l - sl ) +
+                       ( a - sa ) * ( a - sa ) +
+                       ( b - sb ) * ( b - sb );
 
-            dist_xy = ( x - __c_buffer->__xs[ index_sp ] ) * ( x - __c_buffer->__xs[ index_sp ] ) +
-                      ( y - __c_buffer->__ys[ index_sp ] ) * ( y - __c_buffer->__ys[ index_sp ] );
+            dist_xy = ( x - sx ) * ( x - sx ) +
+                      ( y - sy ) * ( y - sy );
 
             total_dist = dist_lab + dist_xy * __c_invwt;
 
@@ -944,15 +961,16 @@ __global__ void assign_last( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buf
 __global__ void update_seeds( __c_ibis* __c_buffer ) {
     int i = CUDA_SP * blockIdx.x + threadIdx.x;
     float inv;
+    float count_px = __c_buffer->__seeds_s[ 6*i ];
     
-    if( __c_buffer->__c_px[ i ] > 0 ) {
-        inv = 1.f / __c_buffer->__c_px[ i ];
+    if( count_px > 0 ) {
+        inv = 1.f / count_px;
         
-        __c_buffer->__xs[ i ] = __c_buffer->__xs_s[ i ] * inv;
-        __c_buffer->__ys[ i ] = __c_buffer->__ys_s[ i ] * inv;
-        __c_buffer->__ls[ i ] = __c_buffer->__ls_s[ i ] * inv;
-        __c_buffer->__as[ i ] = __c_buffer->__as_s[ i ] * inv;
-        __c_buffer->__bs[ i ] = __c_buffer->__bs_s[ i ] * inv;
+        __c_buffer->__seeds[ 5*i + 0 ] = __c_buffer->__seeds_s[ 6*i + 1 ] * inv;
+        __c_buffer->__seeds[ 5*i + 1 ] = __c_buffer->__seeds_s[ 6*i + 2 ] * inv;
+        __c_buffer->__seeds[ 5*i + 2 ] = __c_buffer->__seeds_s[ 6*i + 3 ] * inv;
+        __c_buffer->__seeds[ 5*i + 3 ] = __c_buffer->__seeds_s[ 6*i + 4 ] * inv;
+        __c_buffer->__seeds[ 5*i + 4 ] = __c_buffer->__seeds_s[ 6*i + 5 ] * inv;
         
     }
 
@@ -979,9 +997,9 @@ __global__ void assign_px( int k, __c_ibis* __c_buffer, int exec_count, int* __c
         
         int init_repart = __c_buffer->__init_repa[ index_xy ];
         
-        float l = __c_buffer->__l_vec[ index_xy ];
-        float a = __c_buffer->__a_vec[ index_xy ];
-        float b = __c_buffer->__b_vec[ index_xy ];
+        float l = __c_buffer->__lab[ 3*index_xy ];
+        float a = __c_buffer->__lab[ 3*index_xy + 1 ];
+        float b = __c_buffer->__lab[ 3*index_xy + 2 ];
         
         int best_sp = 0;
         int index_sp;
@@ -994,14 +1012,19 @@ __global__ void assign_px( int k, __c_ibis* __c_buffer, int exec_count, int* __c
        
         for(int i=0; i<nb_adj; i++) {
             index_sp = __c_buffer->__adj_sp[ size_roi * init_repart + i ];
-            //index_sp = __adj_sp[ i ];
             
-            dist_lab = ( l - __c_buffer->__ls[ index_sp ]) * ( l - __c_buffer->__ls[ index_sp ]) +
-                       ( a - __c_buffer->__as[ index_sp ]) * ( a - __c_buffer->__as[ index_sp ]) +
-                       ( b - __c_buffer->__bs[ index_sp ]) * ( b - __c_buffer->__bs[ index_sp ]);
+            float sx = __c_buffer->__seeds[ 5*index_sp + 0 ];
+            float sy = __c_buffer->__seeds[ 5*index_sp + 1 ];
+            float sl = __c_buffer->__seeds[ 5*index_sp + 2 ];
+            float sa = __c_buffer->__seeds[ 5*index_sp + 3 ];
+            float sb = __c_buffer->__seeds[ 5*index_sp + 4 ];
+            
+            dist_lab = ( l - sl ) * ( l - sl ) +
+                       ( a - sa ) * ( a - sa ) +
+                       ( b - sb ) * ( b - sb );
 
-            dist_xy = ( x - __c_buffer->__xs[ index_sp ] ) * ( x - __c_buffer->__xs[ index_sp ] ) +
-                      ( y - __c_buffer->__ys[ index_sp ] ) * ( y - __c_buffer->__ys[ index_sp ] );
+            dist_xy = ( x - sx ) * ( x - sx ) +
+                      ( y - sy ) * ( y - sy );
 
             total_dist = dist_lab + dist_xy * __c_invwt;
 
@@ -1174,9 +1197,9 @@ __global__ void fill_mask( int k, __c_ibis* __c_buffer, int exec_count ) {
             if( __c_buffer->__labels[ index_xy ] < 0 ) {
                 __c_buffer->__labels[ index_xy ] = ref;
                 
-                __tmp_l += __c_buffer->__l_vec[ index_xy ];
-                __tmp_a += __c_buffer->__a_vec[ index_xy ];
-                __tmp_b += __c_buffer->__b_vec[ index_xy ];
+                __tmp_l += __c_buffer->__lab[ 3*index_xy ];
+                __tmp_a += __c_buffer->__lab[ 3*index_xy + 1 ];
+                __tmp_b += __c_buffer->__lab[ 3*index_xy + 2 ];
                 __tmp_x += j;
                 __tmp_y += i;
                 ii++;
@@ -1187,13 +1210,13 @@ __global__ void fill_mask( int k, __c_ibis* __c_buffer, int exec_count ) {
     
     }
 
-    atomicAdd( &__c_buffer->__c_px[ ref ], ii );
-    atomicAdd( &__c_buffer->__xs_s[ ref ], __tmp_x );
-    atomicAdd( &__c_buffer->__ys_s[ ref ], __tmp_y );
-    atomicAdd( &__c_buffer->__ls_s[ ref ], __tmp_l );
-    atomicAdd( &__c_buffer->__as_s[ ref ], __tmp_a );
-    atomicAdd( &__c_buffer->__bs_s[ ref ], __tmp_b );
-    
+    atomicAdd( &__c_buffer->__seeds_s[ 6*ref + 0 ], ii );
+    atomicAdd( &__c_buffer->__seeds_s[ 6*ref + 1 ], __tmp_x );
+    atomicAdd( &__c_buffer->__seeds_s[ 6*ref + 2 ], __tmp_y );
+    atomicAdd( &__c_buffer->__seeds_s[ 6*ref + 3 ], __tmp_l );
+    atomicAdd( &__c_buffer->__seeds_s[ 6*ref + 4 ], __tmp_a );
+    atomicAdd( &__c_buffer->__seeds_s[ 6*ref + 5 ], __tmp_b );
+
 }
 
 __global__ void split_mask( int k, __c_ibis* __c_buffer, int* __c_exec_count, int exec_count, int* __prep_exec_list_x, int* __prep_exec_list_y ) {
@@ -1322,7 +1345,7 @@ void IBIS::mask_propagate_SP() {
         printf("  |-> ---- to_fill : %i ; ---- to split : %i \n", fill_count, split_count );
 #endif
         
-        set_grid_block_dim( &__g_dim_fill, &__t_dim_fill, 8, fill_count );
+        set_grid_block_dim( &__g_dim_fill, &__t_dim_fill, 128, fill_count );
         set_grid_block_dim( &__g_dim_split, &__t_dim_split, 256, split_count );
         
         // fill labels
@@ -1414,7 +1437,5 @@ void IBIS::mask_propagate_SP() {
 #endif
         
     }
-    
-    cudaMemcpy( labels, __h_buffer->__labels, size * sizeof( int ), cudaMemcpyDeviceToHost );
     
 }
