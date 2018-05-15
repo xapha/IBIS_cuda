@@ -1345,7 +1345,7 @@ void IBIS::mask_propagate_SP() {
         printf("  |-> ---- to_fill : %i ; ---- to split : %i \n", fill_count, split_count );
 #endif
         
-        set_grid_block_dim( &__g_dim_fill, &__t_dim_fill, 128, fill_count );
+        set_grid_block_dim( &__g_dim_fill, &__t_dim_fill, 16, fill_count );
         set_grid_block_dim( &__g_dim_split, &__t_dim_split, 256, split_count );
         
         // fill labels
