@@ -36,7 +36,7 @@
 #define VISU                0       // show processed pixels for each iterations
 #define VISU_all            0       // for mask by mask visu of the processing : THREAD_count = 0, very slow
 #define OUTPUT_log          1       // 0:1 print output log
-#define KERNEL_log          1
+#define KERNEL_log          0
 
 #define STEP                2
 
@@ -198,7 +198,7 @@ public:
 
     int getMaxSPNumber() { return maxSPNumber;}
     int getActualSPNumber() { return SPNumber; }
-    int* getLabels() { return labels; }
+    int* getLabels() { return initial_repartition; }
 
     float get_complexity();
 

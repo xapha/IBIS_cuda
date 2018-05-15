@@ -535,7 +535,7 @@ void IBIS::enforceConnectivity()
                         {
                             nindex = y*width + x;
 
-                            if (nlabels[nindex] < 0 && labels[oindex] == labels[nindex])
+                            if (nlabels[nindex] < 0 && initial_repartition[oindex] == initial_repartition[nindex])
                             {
                                 x_vec[count] = x;
                                 y_vec[count] = y;
@@ -562,7 +562,7 @@ void IBIS::enforceConnectivity()
     }
 
     for (i = 0; i < size; i++)
-        labels[i] = nlabels[i];
+        initial_repartition[i] = nlabels[i];
 
     delete[] nlabels;
 
@@ -797,6 +797,7 @@ void IBIS::process( cv::Mat* img ) {
 #endif
     
     cudaMemcpyAsync( __h_buffer->__labels, labels, size * sizeof( int ), cudaMemcpyHostToDevice, stream2 );
+    
     cudaMemcpyAsync( __h_buffer->__t_labels, labels, size * sizeof( int ), cudaMemcpyHostToDevice, stream2 );
     
     SAFE_KER( cudaStreamSynchronize( stream1 ) );
@@ -807,10 +808,6 @@ void IBIS::process( cv::Mat* img ) {
 #endif
 
     // reset var
-    //cudaMemsetAsync( __h_buffer->__seeds_s, 0, maxSPNumber * 6 * sizeof( float ), stream2 );
-    //cudaMemsetAsync( __c_exec_count, 0, sizeof(int), stream2 );
-    //cudaMemsetAsync( __c_sp, 0, sizeof(int)*2, stream2 );
-    
     set_grid_block_dim( &g_dim, &t_dim, 64, SPNumber );
     __c_reset <<< g_dim, t_dim >>> ( __c_Xseeds_init, __c_Yseeds_init, __c_buffer, SPNumber, __c_sp, __c_exec_count );
 #if KERNEL_log
@@ -826,11 +823,13 @@ void IBIS::process( cv::Mat* img ) {
     mask_propagate_SP();
     
     cudaMemcpy( labels, __h_buffer->__labels, size * sizeof( int ), cudaMemcpyDeviceToHost );
+
 #if OUTPUT_log
     st3 = now_ms() - lap;
     lap = now_ms();
 #endif
     // STEP 3 : post processing
+    memcpy( initial_repartition, labels, sizeof(int) * size );
     enforceConnectivity();
 
 #if OUTPUT_log
@@ -1290,18 +1289,6 @@ void IBIS::mask_propagate_SP() {
         
         set_grid_block_dim( &__g_dim_assign, &__t_dim_assign, 128, exec_count );
         
-        if( k < index_mask-1 ) {
-            // prep list
-            
-            //cudaMemcpy( __c_exec_list_x, __prep_exec_list_x, sizeof( int ) * exec_count, cudaMemcpyDeviceToDevice );
-            //cudaMemcpy( __c_exec_list_y, __prep_exec_list_y, sizeof( int ) * exec_count, cudaMemcpyDeviceToDevice );
-            
-            //SAFE_C( cudaMemset( __c_exec_count, 0, sizeof(int) ), "cudaMemset" );
-            //SAFE_C( cudaMemset( __c_sp, 0, sizeof(int)*2 ), "cudaMemset" );
-            
-        }
-        
-        
 #if KERNEL_log
         printf(" || -- iteration %i : %i / %i = %f \n", k, exec_count, masks_pos[k].total_count, float(exec_count)/float(masks_pos[k].total_count)*100);
         printf("  |-> assign_px (%i, %i ; %i) => %i \n", __g_dim_assign, masks[ k ].size_to_assign, __t_dim_assign, __t_dim_assign * masks[ k ].size_to_assign );
@@ -1312,7 +1299,6 @@ void IBIS::mask_propagate_SP() {
             assign_px <<< dim3(__g_dim_assign, masks[ k ].size_to_assign), __t_dim_assign >>> ( k, __c_buffer, exec_count, masks_pos[k].apply_x, masks_pos[k].apply_y );
         else
             assign_px <<< dim3(__g_dim_assign, masks[ k ].size_to_assign), __t_dim_assign >>> ( k, __c_buffer, exec_count, __prep_exec_list_x, __prep_exec_list_y );
-        
         
 #if KERNEL_log
         SAFE_KER( cudaPeekAtLastError() );
@@ -1344,7 +1330,7 @@ void IBIS::mask_propagate_SP() {
         printf("  |-> fill_mask (%i ; %i) => %i \n", __g_dim_fill, __t_dim_fill, __t_dim_fill * __g_dim_fill );
 #endif
         
-        fill_mask_assign <<< __g_dim_fill, __t_dim_fill, 0, stream1 >>> ( k, __c_buffer, fill_count );
+        fill_mask_assign <<< __g_dim_fill, __t_dim_fill >>> ( k, __c_buffer, fill_count );
 #if KERNEL_log
         SAFE_KER( cudaPeekAtLastError() );
 #endif
@@ -1354,17 +1340,20 @@ void IBIS::mask_propagate_SP() {
         printf("  |-> split_mask (%i ; %i) => %i \n", __g_dim_split, __t_dim_split, __t_dim_split * __g_dim_split );
 #endif
 
-        split_mask <<< __g_dim_split, __t_dim_split, 0, stream2 >>> ( k, __c_buffer, __c_exec_count, split_count, __prep_exec_list_x, __prep_exec_list_y );
+        split_mask <<< __g_dim_split, __t_dim_split >>> ( k, __c_buffer, __c_exec_count, split_count, __prep_exec_list_x, __prep_exec_list_y );
         
 #if KERNEL_log
         SAFE_KER( cudaPeekAtLastError() );
 #endif
         
         // sum seeds
-        fill_mask <<< __g_dim_fill, __t_dim_fill, 0, stream1 >>> ( k, __c_buffer, fill_count );
+        fill_mask <<< __g_dim_fill, __t_dim_fill >>> ( k, __c_buffer, fill_count );
 #if KERNEL_log
         SAFE_KER( cudaPeekAtLastError() );
 #endif
+        
+        //SAFE_KER( cudaStreamSynchronize( stream1 ) );
+        //SAFE_KER( cudaStreamSynchronize( stream2 ) );
         
 #if STEP > 1
         if( k == 0 ) {
@@ -1378,12 +1367,7 @@ void IBIS::mask_propagate_SP() {
             cvWaitKey( 0 );
 #endif
             
-            cudaMemcpyAsync( &exec_count, __c_exec_count, sizeof( int ), cudaMemcpyDeviceToHost, stream2 );
-            //cudaMemcpyAsync( __c_exec_list_x, __prep_exec_list_x, sizeof( int ) * exec_count, cudaMemcpyDeviceToDevice, stream2 );
-            //cudaMemcpyAsync( __c_exec_list_y, __prep_exec_list_y, sizeof( int ) * exec_count, cudaMemcpyDeviceToDevice, stream2 );
-            
-            SAFE_KER( cudaStreamSynchronize( stream1 ) );
-            SAFE_KER( cudaStreamSynchronize( stream2 ) );
+            cudaMemcpy( &exec_count, __c_exec_count, sizeof( int ), cudaMemcpyDeviceToHost );
             
             set_grid_block_dim( &__g_dim_assign, &__t_dim_assign, 64, exec_count );
 #if KERNEL_log
@@ -1400,25 +1384,18 @@ void IBIS::mask_propagate_SP() {
             
         }
 #endif
-        
-        SAFE_KER( cudaDeviceSynchronize() );
-        
         if(k > 0) {
             // reset __t_labels
-            cudaMemcpyAsync( __h_buffer->__t_labels, __h_buffer->__labels, size * sizeof( int ), cudaMemcpyDeviceToDevice, stream2 );
-            
-            // prepare next iteration
-            
+            cudaMemcpy( __h_buffer->__t_labels, __h_buffer->__labels, size * sizeof( int ), cudaMemcpyDeviceToDevice );
             
             // sync
-            SAFE_KER( cudaStreamSynchronize( stream1 ) );
-            SAFE_KER( cudaStreamSynchronize( stream2 ) );
+            //SAFE_KER( cudaStreamSynchronize( stream1 ) );
+            //SAFE_KER( cudaStreamSynchronize( stream2 ) );
             
             // update seeds
             update_seeds <<< __g_dim_sp, __t_dim_sp >>> ( __c_buffer, __c_sp, __c_exec_count );
 #if KERNEL_log
             SAFE_KER( cudaPeekAtLastError() );
-            SAFE_KER( cudaDeviceSynchronize() );
 #endif
             
         }
