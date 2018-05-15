@@ -774,6 +774,7 @@ void IBIS::process( cv::Mat* img ) {
         
         cudaStreamCreate( &stream1 );
         cudaStreamCreate( &stream2 );
+        std::fill( labels, labels + size, -1 );
         
     }
     
@@ -790,7 +791,7 @@ void IBIS::process( cv::Mat* img ) {
     
     cudaMemcpy( __c_RGB, __h_RGB, sizeof(float) * size * 3, cudaMemcpyHostToDevice );
     
-    set_grid_block_dim( &g_dim, &t_dim, 128, size );
+    set_grid_block_dim( &g_dim, &t_dim, 64, size );
     RGB2LAB <<< g_dim, t_dim, 0, stream1 >>> ( __c_RGB, __c_buffer, size );
 #if KERNEL_log
         SAFE_KER( cudaPeekAtLastError() );
@@ -900,6 +901,9 @@ __global__ void assign_last( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buf
     if( x >= 0 && x < __c_width && y >= 0 && y < __c_height ) {
         int index_xy = y * __c_width + x;
         
+        if( __c_buffer->__labels[ index_xy ] >= 0 )
+            return;
+        
         int init_repart = __c_buffer->__init_repa[ index_xy ];
         
         float l = __c_buffer->__lab[ 3*index_xy ];
@@ -941,16 +945,16 @@ __global__ void assign_last( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buf
         __c_buffer->__labels[ index_xy ] = best_sp;
 
 #if VISU
-        __c_buffer->__proc[ index_xy ] = 10;
+        __c_buffer->__proc[ index_xy ] += 10;
 #endif
     }
     
 }
 
-__global__ void update_seeds( __c_ibis* __c_buffer, int* __c_sp, int* __c_exec_count ) {
+__global__ void update_seeds( int k, __c_ibis* __c_buffer, int* __c_sp, int* __c_exec_count ) {
     int i = CUDA_SP * blockIdx.x + threadIdx.x;
     
-    if( i == 0 ) {
+    if( i == 0 && k > 0 ) {
         __c_sp[0] = 0;
         __c_sp[1] = 0;
         
@@ -1041,7 +1045,7 @@ __global__ void assign_px( int k, __c_ibis* __c_buffer, int exec_count, int* __c
             __c_buffer->__labels[ index_xy ] = best_sp;
 
 #if VISU
-        __c_buffer->__proc[ index_xy ] = 10;
+        __c_buffer->__proc[ index_xy ] += 10;
 #endif
     }
     
@@ -1366,16 +1370,21 @@ void IBIS::mask_propagate_SP() {
             
             cvWaitKey( 0 );
 #endif
+
+            update_seeds <<< __g_dim_sp, __t_dim_sp >>> ( k, __c_buffer, __c_sp, __c_exec_count );
+#if KERNEL_log
+            SAFE_KER( cudaPeekAtLastError() );
+#endif
             
-            cudaMemcpy( &exec_count, __c_exec_count, sizeof( int ), cudaMemcpyDeviceToHost );
+            //cudaMemcpy( &exec_count, __c_exec_count, sizeof( int ), cudaMemcpyDeviceToHost );
             
-            set_grid_block_dim( &__g_dim_assign, &__t_dim_assign, 64, exec_count );
+            set_grid_block_dim( &__g_dim_assign, &__t_dim_assign, 64, split_count );
 #if KERNEL_log
             printf("  |-> assign_last (%i ; %i,%i) \n", __g_dim_assign, __t_dim_assign, __count_last );
 #endif
             
             // assign last
-            assign_last <<< dim3(__g_dim_assign, __count_last ), __t_dim_assign >>> ( __c_masks_pos, k, __c_buffer, exec_count, __prep_exec_list_x, __prep_exec_list_y );
+            assign_last <<< dim3(__g_dim_assign, __count_last ), __t_dim_assign >>> ( __c_masks_pos, k, __c_buffer, split_count, __prep_exec_list_x, __prep_exec_list_y );
             
 #if KERNEL_log
             SAFE_KER( cudaPeekAtLastError() );
@@ -1393,7 +1402,7 @@ void IBIS::mask_propagate_SP() {
             //SAFE_KER( cudaStreamSynchronize( stream2 ) );
             
             // update seeds
-            update_seeds <<< __g_dim_sp, __t_dim_sp >>> ( __c_buffer, __c_sp, __c_exec_count );
+            update_seeds <<< __g_dim_sp, __t_dim_sp >>> ( k, __c_buffer, __c_sp, __c_exec_count );
 #if KERNEL_log
             SAFE_KER( cudaPeekAtLastError() );
 #endif

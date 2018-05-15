@@ -36,7 +36,7 @@
 #define VISU                0       // show processed pixels for each iterations
 #define VISU_all            0       // for mask by mask visu of the processing : THREAD_count = 0, very slow
 #define OUTPUT_log          1       // 0:1 print output log
-#define KERNEL_log          0
+#define KERNEL_log          1
 
 #define STEP                2
 
@@ -95,7 +95,7 @@ __constant__ int __last_px_y[ 45 ] = { 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 2, 2,
 #else
 #define __count_last 0
 
-#endif // more is actually quite ridiculous
+#endif
 
 typedef struct mask_design {
     int size;
@@ -167,7 +167,7 @@ typedef struct __c_ibis {
 	
 __global__ void RGB2LAB( float* RGB, __c_ibis* __c_buffer, int count_exec );
 
-__global__ void update_seeds( __c_ibis* ibis_data, int* __c_sp, int* __c_exec_count );
+__global__ void update_seeds( int k, __c_ibis* ibis_data, int* __c_sp, int* __c_exec_count );
 
 __global__ void assign_px( int k, __c_ibis* __c_buffer, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y  );
 

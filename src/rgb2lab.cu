@@ -6,15 +6,13 @@
 __global__ void RGB2LAB( float* RGB, __c_ibis* __c_buffer, int count_exec ) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     
-    //printf(" %i / %i ", index, count_exec);
-    
     if( index >= count_exec )
         return;
     
 	//------------------------
 	// sRGB to XYZ conversion
 	//------------------------
-	float r = float( RGB[ index * 3 + 2 ] ) / 255;
+    float r = float( RGB[ index * 3 + 2 ] ) / 255;
 	float g = float( RGB[ index * 3 + 1 ] ) / 255;
     float b = float( RGB[ index * 3 ] ) / 255;
 	
@@ -34,35 +32,32 @@ __global__ void RGB2LAB( float* RGB, __c_ibis* __c_buffer, int count_exec ) {
 	float epsilon = 0.008856;	//actual CIE standard
 	float kappa   = 903.3;		//actual CIE standard
 
+    
     float l, a;
 
-	if( Y > epsilon )
-	    l = 116 * powf(Y, 1.0/3.0) - 16;
+    if( Y > epsilon )
+        l = 116 * powf(Y, 1.0/3.0) - 16;
     else
         l = kappa * Y;
-    
+
     float fx, fy, fz;
     if(X > epsilon)
-	    fx = powf(X, 1.0/3.0);
-	else
-	    fx = 7.787*X + 16.0/116.0;
-	
-	if(Y > epsilon)
-	    fy = powf(Y, 1.0/3.0);
-	else
-	    fy = 7.787*Y + 16.0/116.0;
-	
-	if(Z > epsilon)
-	    fz = powf(Z, 1.0/3.0);
-	else
-	    fz = 7.787*Z + 16.0/116.0;
+        fx = powf(X, 1.0/3.0);
+    else
+        fx = 7.787*X + 16.0/116.0;
+
+    if(Y > epsilon)
+        fy = powf(Y, 1.0/3.0);
+    else
+        fy = 7.787*Y + 16.0/116.0;
+
+    if(Z > epsilon)
+        fz = powf(Z, 1.0/3.0);
+    else
+        fz = 7.787*Z + 16.0/116.0;
     
     a = 500 * ( fx - fy ) + 128;
     b = 500 * ( fy - fz ) + 128;
-
-//	__c_buffer->__l_vec[ index ] = ( float( 116.0*fy-16.0 ) / 100 ) * 255 ;
-//	__c_buffer->__a_vec[ index ] = ( ( float( 500.0*(fx-fy) ) + 120 ) / 240 ) * 255 ;
-//	__c_buffer->__b_vec[ index ] = ( ( float( 200.0*(fy-fz) ) + 120 ) / 240 ) * 255 ;
 	
 	__c_buffer->__lab[ 3*index + 0 ] = l * 255 / 100;
 	__c_buffer->__lab[ 3*index + 1 ] = a + 128;
