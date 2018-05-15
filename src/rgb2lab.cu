@@ -3,7 +3,7 @@
 //===========================================================================
 ///	RGB2LAB
 //===========================================================================
-__global__ void RGB2LAB( float* R, float* G, float* B, __c_ibis* __c_buffer, int count_exec ) {
+__global__ void RGB2LAB( float* RGB, __c_ibis* __c_buffer, int count_exec ) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     
     //printf(" %i / %i ", index, count_exec);
@@ -14,9 +14,9 @@ __global__ void RGB2LAB( float* R, float* G, float* B, __c_ibis* __c_buffer, int
 	//------------------------
 	// sRGB to XYZ conversion
 	//------------------------
-	float r = float( R[ index ] ) / 255;
-	float g = float( G[ index ] ) / 255;
-    float b = float( B[ index ] ) / 255;
+	float r = float( RGB[ index * 3 + 2 ] ) / 255;
+	float g = float( RGB[ index * 3 + 1 ] ) / 255;
+    float b = float( RGB[ index * 3 ] ) / 255;
 	
 	float X = r*0.412453 + g*0.357580 + b*0.180423;
 	float Y = r*0.212671 + g*0.715160 + b*0.072169;

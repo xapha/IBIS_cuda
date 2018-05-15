@@ -165,13 +165,13 @@ typedef struct __c_ibis {
     
 } __c_ibis;
 	
-__global__ void RGB2LAB( float* R, float* G, float* B, __c_ibis* __c_buffer, int count_exec );
+__global__ void RGB2LAB( float* RGB, __c_ibis* __c_buffer, int count_exec );
 
 __global__ void update_seeds( __c_ibis* ibis_data );
 
 __global__ void assign_px( int k, __c_ibis* __c_buffer, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y  );
 
-__global__ void assign_last( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buffer, int* exec_count, int* __c_exec_list_x, int* __c_exec_list_y );
+__global__ void assign_last( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buffer, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y );
 
 __global__ void __c_reset( float* __c_Xseeds_init, float* __c_Yseeds_init, __c_ibis* __c_buffer, int SPNumber );
 
@@ -281,6 +281,7 @@ private:
     int* __prep_exec_list_y;
     
     int exec_count;
+    int* p_exec_count;
     int* __c_exec_count;
 
     // boundaries
@@ -294,16 +295,13 @@ private:
     int* __c_sp;
     
     // RGB to LAB
-    float* __h_R;
-    float* __h_G;
-    float* __h_B;
-    
-    float* __c_R;
-    float* __c_G;
-    float* __c_B;
+    float* __h_RGB;
+    float* __c_RGB;
     
     float* __c_Xseeds_init;
     float* __c_Yseeds_init;
+    
+    cudaStream_t stream1, stream2;
     
 public:
     double st2, st3, st4;
