@@ -171,7 +171,7 @@ __global__ void update_seeds( __c_ibis* ibis_data );
 
 __global__ void assign_px( int k, __c_ibis* __c_buffer, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y  );
 
-__global__ void assign_last( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buffer, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y );
+__global__ void assign_last( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buffer, int* exec_count, int* __c_exec_list_x, int* __c_exec_list_y );
 
 __global__ void __c_reset( float* __c_Xseeds_init, float* __c_Yseeds_init, __c_ibis* __c_buffer, int SPNumber );
 
@@ -289,6 +289,9 @@ private:
     
     int* __c_split;
     int split_count;
+    
+    int* sp_count;
+    int* __c_sp;
     
     // RGB to LAB
     float* __h_R;
