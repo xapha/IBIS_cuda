@@ -219,7 +219,6 @@ IBIS::IBIS(int _maxSPNum, int _compacity ) {
 }
 
 IBIS::~IBIS() {
-    delete[] labels;
     delete[] avec;
     delete[] lvec;
     delete[] bvec;
@@ -269,6 +268,8 @@ IBIS::~IBIS() {
     SAFE_C( cudaFreeHost( __h_R ), "free bseeds" );
     SAFE_C( cudaFreeHost( __h_G ), "free bseeds" );
     SAFE_C( cudaFreeHost( __h_B ), "free bseeds" );
+    SAFE_C( cudaFreeHost( labels ), "free labels" );
+    
     SAFE_C( cudaFreeHost( sp_count ), "free sp_count" );
     
     // cuda
@@ -647,7 +648,7 @@ void IBIS::init() {
     std::fill( processed, processed + size, 0 );
 
     // output labels buffer
-    labels = new int[size];
+    cudaMallocHost( (void**)&labels, sizeof(int) * size );
 
     // repartition of pixels at start
     initial_repartition = new int[size];
