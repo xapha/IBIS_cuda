@@ -799,10 +799,6 @@ void IBIS::process( cv::Mat* img ) {
     cudaMemcpyAsync( __h_buffer->__labels, labels, size * sizeof( int ), cudaMemcpyHostToDevice, stream2 );
     cudaMemcpyAsync( __h_buffer->__t_labels, labels, size * sizeof( int ), cudaMemcpyHostToDevice, stream2 );
     
-    cudaMemsetAsync( __h_buffer->__seeds_s, 0, maxSPNumber * 6 * sizeof( float ), stream2 );
-    cudaMemsetAsync( __c_exec_count, 0, sizeof(int), stream2 );
-    cudaMemsetAsync( __c_sp, 0, sizeof(int)*2, stream2 );
-    
     SAFE_KER( cudaStreamSynchronize( stream1 ) );
     SAFE_KER( cudaStreamSynchronize( stream2 ) );
     
@@ -811,8 +807,12 @@ void IBIS::process( cv::Mat* img ) {
 #endif
 
     // reset var
-    set_grid_block_dim( &g_dim, &t_dim, 32, SPNumber );
-    __c_reset <<< g_dim, t_dim >>> ( __c_Xseeds_init, __c_Yseeds_init, __c_buffer, SPNumber );
+    //cudaMemsetAsync( __h_buffer->__seeds_s, 0, maxSPNumber * 6 * sizeof( float ), stream2 );
+    //cudaMemsetAsync( __c_exec_count, 0, sizeof(int), stream2 );
+    //cudaMemsetAsync( __c_sp, 0, sizeof(int)*2, stream2 );
+    
+    set_grid_block_dim( &g_dim, &t_dim, 64, SPNumber );
+    __c_reset <<< g_dim, t_dim >>> ( __c_Xseeds_init, __c_Yseeds_init, __c_buffer, SPNumber, __c_sp, __c_exec_count );
 #if KERNEL_log
         SAFE_KER( cudaPeekAtLastError() );
 #endif
@@ -850,7 +850,7 @@ void IBIS::process( cv::Mat* img ) {
 
 //--------------------------------------------------------------------------------CUDA
 
-__global__ void __c_reset( float* __c_Xseeds_init, float* __c_Yseeds_init, __c_ibis* __c_buffer, int SPNumber ) {
+__global__ void __c_reset( float* __c_Xseeds_init, float* __c_Yseeds_init, __c_ibis* __c_buffer, int SPNumber, int* __c_sp, int* __c_exec_count ) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     if( index >= SPNumber )
         return;
@@ -863,6 +863,22 @@ __global__ void __c_reset( float* __c_Xseeds_init, float* __c_Yseeds_init, __c_i
     __c_buffer->__seeds[ 5*index + 2 ] = __c_buffer->__lab[ 3*index_xy ];
     __c_buffer->__seeds[ 5*index + 3 ] = __c_buffer->__lab[ 3*index_xy + 1 ];
     __c_buffer->__seeds[ 5*index + 4 ] = __c_buffer->__lab[ 3*index_xy + 2 ];
+    
+    //reset seeds_s
+    __c_buffer->__seeds_s[ 5*index + 0 ] = 0.f;
+    __c_buffer->__seeds_s[ 5*index + 1 ] = 0.f;
+    __c_buffer->__seeds_s[ 5*index + 2 ] = 0.f;
+    __c_buffer->__seeds_s[ 5*index + 3 ] = 0.f;
+    __c_buffer->__seeds_s[ 5*index + 4 ] = 0.f;
+    __c_buffer->__seeds_s[ 5*index + 5 ] = 0.f;
+    
+    if( index == 0 ) {
+        __c_sp[ 0 ] = 0;
+        __c_sp[ 1 ] = 0;
+        
+        *__c_exec_count = 0;
+        
+    }
     
 }
 
@@ -932,8 +948,17 @@ __global__ void assign_last( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buf
     
 }
 
-__global__ void update_seeds( __c_ibis* __c_buffer ) {
+__global__ void update_seeds( __c_ibis* __c_buffer, int* __c_sp, int* __c_exec_count ) {
     int i = CUDA_SP * blockIdx.x + threadIdx.x;
+    
+    if( i == 0 ) {
+        __c_sp[0] = 0;
+        __c_sp[1] = 0;
+        
+        *__c_exec_count = 0;
+        
+    }
+    
     float inv;
     float count_px = __c_buffer->__seeds_s[ 6*i ];
     
@@ -1090,6 +1115,37 @@ __global__ void check_boundaries( int k, __c_ibis* __c_buffer, int exec_count, i
     
 }
 
+__global__ void fill_mask_assign( int k, __c_ibis* __c_buffer, int fill_count ) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    if( index >= fill_count )
+        return;
+    
+    int x_ref = __c_buffer->__to_fill_x[ index ];
+    int y_ref = __c_buffer->__to_fill_y[ index ];
+    int ref = __c_buffer->__to_fill[ index ];
+    
+    // fill limit
+    int i_max = __design_size[ k ];
+    int j_max = __design_size[ k ];
+    int index_y;
+    
+    if( y_ref + i_max >= __c_height )
+        i_max = __c_height - y_ref;
+    
+    if( x_ref + j_max >= __c_width )
+        j_max = __c_width - x_ref;
+    
+     for( int i=y_ref; i<=y_ref+i_max; i++ ) {
+        index_y = i * __c_width;
+        
+        for( int j=x_ref; j<=x_ref+j_max; j++ )
+            __c_buffer->__labels[ index_y + j ] = ref;
+        
+    }
+    
+}
+
 __global__ void fill_mask( int k, __c_ibis* __c_buffer, int exec_count ) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     
@@ -1121,35 +1177,20 @@ __global__ void fill_mask( int k, __c_ibis* __c_buffer, int exec_count ) {
     if( x_ref + j_max >= __c_width )
         j_max = __c_width - x_ref;
     
-     for( int i=y_ref; i<=y_ref+i_max; i++ ) {
-        index_y = i * __c_width;
-        
-        for( int j=x_ref; j<=x_ref+j_max; j++ ) {
-            index_xy = index_y + j;
-            __c_buffer->__labels[ index_xy ] = ref;
-            
-        }
-            
-    }
-    
     for( int i=y_ref; i<=y_ref+i_max; i++ ) {
         index_y = i * __c_width;
         
         for( int j=x_ref; j<=x_ref+j_max; j++ ) {
             index_xy = index_y + j;
             
-            //if( __c_buffer->__labels[ index_xy ] < 0 ) {
-                //__c_buffer->__labels[ index_xy ] = ref;
-                
-                __tmp_l += __c_buffer->__lab[ 3*index_xy ];
-                __tmp_a += __c_buffer->__lab[ 3*index_xy + 1 ];
-                __tmp_b += __c_buffer->__lab[ 3*index_xy + 2 ];
-                __tmp_x += j;
-                __tmp_y += i;
-                ii++;
+            //__c_buffer->__labels[ index_y + j ] = ref;
+            __tmp_l += __c_buffer->__lab[ 3*index_xy ];
+            __tmp_a += __c_buffer->__lab[ 3*index_xy + 1 ];
+            __tmp_b += __c_buffer->__lab[ 3*index_xy + 2 ];
+            __tmp_x += j;
+            __tmp_y += i;
+            ii++;
             
-            //}
-        
         }
     
     }
@@ -1242,23 +1283,25 @@ void IBIS::mask_propagate_SP() {
         printf( " |-> ---- ---- ---- <-| \n" );
 #endif
 
+        if( k == index_mask-1 )
+            exec_count = masks_pos[k].total_count;
+        else
+            exec_count = split_count * 4;
+        
+        set_grid_block_dim( &__g_dim_assign, &__t_dim_assign, 128, exec_count );
+        
         if( k < index_mask-1 ) {
-            cudaMemcpy( p_exec_count, __c_exec_count, sizeof( int ), cudaMemcpyDeviceToHost );
-            exec_count = *p_exec_count;
+            // prep list
             
-            cudaMemcpy( __c_exec_list_x, __prep_exec_list_x, sizeof( int ) * exec_count, cudaMemcpyDeviceToDevice );
-            cudaMemcpy( __c_exec_list_y, __prep_exec_list_y, sizeof( int ) * exec_count, cudaMemcpyDeviceToDevice );
+            //cudaMemcpy( __c_exec_list_x, __prep_exec_list_x, sizeof( int ) * exec_count, cudaMemcpyDeviceToDevice );
+            //cudaMemcpy( __c_exec_list_y, __prep_exec_list_y, sizeof( int ) * exec_count, cudaMemcpyDeviceToDevice );
             
-            SAFE_C( cudaMemset( __c_exec_count, 0, sizeof(int) ), "cudaMemset" );
-            SAFE_C( cudaMemset( __c_fill, 0, sizeof(int) ), "cudaMemset" );
-            SAFE_C( cudaMemset( __c_split, 0, sizeof(int) ), "cudaMemset" );
-            SAFE_C( cudaMemset( __c_sp, 0, sizeof(int)*2 ), "cudaMemset" );
+            //SAFE_C( cudaMemset( __c_exec_count, 0, sizeof(int) ), "cudaMemset" );
+            //SAFE_C( cudaMemset( __c_sp, 0, sizeof(int)*2 ), "cudaMemset" );
             
         }
-        else
-            exec_count = masks_pos[k].total_count;
-                
-        set_grid_block_dim( &__g_dim_assign, &__t_dim_assign, 128, exec_count );
+        
+        
 #if KERNEL_log
         printf(" || -- iteration %i : %i / %i = %f \n", k, exec_count, masks_pos[k].total_count, float(exec_count)/float(masks_pos[k].total_count)*100);
         printf("  |-> assign_px (%i, %i ; %i) => %i \n", __g_dim_assign, masks[ k ].size_to_assign, __t_dim_assign, __t_dim_assign * masks[ k ].size_to_assign );
@@ -1268,12 +1311,11 @@ void IBIS::mask_propagate_SP() {
         if( k == index_mask-1 )
             assign_px <<< dim3(__g_dim_assign, masks[ k ].size_to_assign), __t_dim_assign >>> ( k, __c_buffer, exec_count, masks_pos[k].apply_x, masks_pos[k].apply_y );
         else
-            assign_px <<< dim3(__g_dim_assign, masks[ k ].size_to_assign), __t_dim_assign >>> ( k, __c_buffer, exec_count, __c_exec_list_x, __c_exec_list_y );
+            assign_px <<< dim3(__g_dim_assign, masks[ k ].size_to_assign), __t_dim_assign >>> ( k, __c_buffer, exec_count, __prep_exec_list_x, __prep_exec_list_y );
         
         
 #if KERNEL_log
         SAFE_KER( cudaPeekAtLastError() );
-        SAFE_KER( cudaDeviceSynchronize() );
 #endif
         
         // check borders        
@@ -1285,11 +1327,10 @@ void IBIS::mask_propagate_SP() {
         if( k == index_mask-1 )
             check_boundaries <<< __g_dim_assign, __t_dim_assign >>> ( k, __c_buffer, exec_count, masks_pos[k].apply_x, masks_pos[k].apply_y, __c_split, __c_sp );
         else
-            check_boundaries <<< __g_dim_assign, __t_dim_assign >>> ( k, __c_buffer, exec_count, __c_exec_list_x, __c_exec_list_y, __c_split, __c_sp );
+            check_boundaries <<< __g_dim_assign, __t_dim_assign >>> ( k, __c_buffer, exec_count, __prep_exec_list_x, __prep_exec_list_y, __c_split, __c_sp );
         
 #if KERNEL_log
         SAFE_KER( cudaPeekAtLastError() );
-        SAFE_KER( cudaDeviceSynchronize() );
 #endif
         cudaMemcpy( sp_count, __c_sp, sizeof( int )*2, cudaMemcpyDeviceToHost );
         split_count = sp_count[0];
@@ -1298,32 +1339,31 @@ void IBIS::mask_propagate_SP() {
         set_grid_block_dim( &__g_dim_fill, &__t_dim_fill, 16, fill_count );
         set_grid_block_dim( &__g_dim_split, &__t_dim_split, 256, split_count );
         
-        // split masks
-#if KERNEL_log
-        printf("  |-> split_mask (%i ; %i) => %i \n", __g_dim_split, __t_dim_split, __t_dim_split * __g_dim_split );
-#endif
-        split_mask <<< __g_dim_split, __t_dim_split >>> ( k, __c_buffer, __c_exec_count, split_count, __prep_exec_list_x, __prep_exec_list_y );
-#if KERNEL_log
-        SAFE_KER( cudaPeekAtLastError() );
-        SAFE_KER( cudaDeviceSynchronize() );
-#endif
-        
-        
         // fill labels
 #if KERNEL_log
         printf("  |-> fill_mask (%i ; %i) => %i \n", __g_dim_fill, __t_dim_fill, __t_dim_fill * __g_dim_fill );
 #endif
-
-        fill_mask <<< __g_dim_fill, __t_dim_fill >>> ( k, __c_buffer, fill_count );
+        
+        fill_mask_assign <<< __g_dim_fill, __t_dim_fill, 0, stream1 >>> ( k, __c_buffer, fill_count );
 #if KERNEL_log
         SAFE_KER( cudaPeekAtLastError() );
-        SAFE_KER( cudaDeviceSynchronize() );
 #endif
         
-        //fill_mask__assign_labels <<< __g_dim_fill, dim3( __t_dim_fill, masks[k].size ) >>> ( k, __c_buffer, fill_count );
+        // split masks
+#if KERNEL_log
+        printf("  |-> split_mask (%i ; %i) => %i \n", __g_dim_split, __t_dim_split, __t_dim_split * __g_dim_split );
+#endif
+
+        split_mask <<< __g_dim_split, __t_dim_split, 0, stream2 >>> ( k, __c_buffer, __c_exec_count, split_count, __prep_exec_list_x, __prep_exec_list_y );
+        
 #if KERNEL_log
         SAFE_KER( cudaPeekAtLastError() );
-        SAFE_KER( cudaDeviceSynchronize() );
+#endif
+        
+        // sum seeds
+        fill_mask <<< __g_dim_fill, __t_dim_fill, 0, stream1 >>> ( k, __c_buffer, fill_count );
+#if KERNEL_log
+        SAFE_KER( cudaPeekAtLastError() );
 #endif
         
 #if STEP > 1
@@ -1338,9 +1378,12 @@ void IBIS::mask_propagate_SP() {
             cvWaitKey( 0 );
 #endif
             
-            cudaMemcpy( &exec_count, __c_exec_count, sizeof( int ), cudaMemcpyDeviceToHost );
-            cudaMemcpy( __c_exec_list_x, __prep_exec_list_x, sizeof( int ) * exec_count, cudaMemcpyDeviceToDevice );
-            cudaMemcpy( __c_exec_list_y, __prep_exec_list_y, sizeof( int ) * exec_count, cudaMemcpyDeviceToDevice );
+            cudaMemcpyAsync( &exec_count, __c_exec_count, sizeof( int ), cudaMemcpyDeviceToHost, stream2 );
+            //cudaMemcpyAsync( __c_exec_list_x, __prep_exec_list_x, sizeof( int ) * exec_count, cudaMemcpyDeviceToDevice, stream2 );
+            //cudaMemcpyAsync( __c_exec_list_y, __prep_exec_list_y, sizeof( int ) * exec_count, cudaMemcpyDeviceToDevice, stream2 );
+            
+            SAFE_KER( cudaStreamSynchronize( stream1 ) );
+            SAFE_KER( cudaStreamSynchronize( stream2 ) );
             
             set_grid_block_dim( &__g_dim_assign, &__t_dim_assign, 64, exec_count );
 #if KERNEL_log
@@ -1348,27 +1391,36 @@ void IBIS::mask_propagate_SP() {
 #endif
             
             // assign last
-            assign_last <<< dim3(__g_dim_assign, __count_last ), __t_dim_assign >>> ( __c_masks_pos, k, __c_buffer, exec_count, __c_exec_list_x, __c_exec_list_y );
+            assign_last <<< dim3(__g_dim_assign, __count_last ), __t_dim_assign >>> ( __c_masks_pos, k, __c_buffer, exec_count, __prep_exec_list_x, __prep_exec_list_y );
             
 #if KERNEL_log
             SAFE_KER( cudaPeekAtLastError() );
-            SAFE_KER( cudaDeviceSynchronize() );
+            //SAFE_KER( cudaDeviceSynchronize() );
 #endif
             
         }
 #endif
-
+        
+        SAFE_KER( cudaDeviceSynchronize() );
+        
         if(k > 0) {
             // reset __t_labels
-            cudaMemcpy( __h_buffer->__t_labels, __h_buffer->__labels, size * sizeof( int ), cudaMemcpyDeviceToDevice );
+            cudaMemcpyAsync( __h_buffer->__t_labels, __h_buffer->__labels, size * sizeof( int ), cudaMemcpyDeviceToDevice, stream2 );
+            
+            // prepare next iteration
+            
+            
+            // sync
+            SAFE_KER( cudaStreamSynchronize( stream1 ) );
+            SAFE_KER( cudaStreamSynchronize( stream2 ) );
             
             // update seeds
-            update_seeds <<< __g_dim_sp, __t_dim_sp >>> ( __c_buffer );
+            update_seeds <<< __g_dim_sp, __t_dim_sp >>> ( __c_buffer, __c_sp, __c_exec_count );
 #if KERNEL_log
             SAFE_KER( cudaPeekAtLastError() );
             SAFE_KER( cudaDeviceSynchronize() );
 #endif
-        
+            
         }
         
 #if VISU

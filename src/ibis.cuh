@@ -36,7 +36,7 @@
 #define VISU                0       // show processed pixels for each iterations
 #define VISU_all            0       // for mask by mask visu of the processing : THREAD_count = 0, very slow
 #define OUTPUT_log          1       // 0:1 print output log
-#define KERNEL_log          0
+#define KERNEL_log          1
 
 #define STEP                2
 
@@ -167,17 +167,19 @@ typedef struct __c_ibis {
 	
 __global__ void RGB2LAB( float* RGB, __c_ibis* __c_buffer, int count_exec );
 
-__global__ void update_seeds( __c_ibis* ibis_data );
+__global__ void update_seeds( __c_ibis* ibis_data, int* __c_sp, int* __c_exec_count );
 
 __global__ void assign_px( int k, __c_ibis* __c_buffer, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y  );
 
 __global__ void assign_last( mask_apply* __c_masks_pos, int k, __c_ibis* __c_buffer, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y );
 
-__global__ void __c_reset( float* __c_Xseeds_init, float* __c_Yseeds_init, __c_ibis* __c_buffer, int SPNumber );
+__global__ void __c_reset( float* __c_Xseeds_init, float* __c_Yseeds_init, __c_ibis* __c_buffer, int SPNumber, int* __c_sp, int* __c_exec_count );
 
 __global__ void check_boundaries( int k, __c_ibis* __c_buffer, int exec_count, int* __c_exec_list_x, int* __c_exec_list_y, int* __c_split, int* __c_fill );
 
 __global__ void fill_mask( int k, __c_ibis* __c_buffer, int fill_count );
+
+__global__ void fill_mask_assign( int k, __c_ibis* __c_buffer, int fill_count );
 
 __global__ void split_mask( int k, __c_ibis* __c_buffer, int* __c_exec_count, int split_count, int* __prep_exec_list_x, int* __prep_exec_list_y );
 
