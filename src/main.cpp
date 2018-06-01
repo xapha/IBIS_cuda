@@ -19,6 +19,9 @@
 #include <dirent.h>
 
 using namespace std;
+
+void execute_IBIS( int K, int compa, IBIS* Super_Pixel, cv::Mat* img, std::string output_basename, int ii=0);
+
 //=================================================================================
 /// DrawContoursAroundSegments
 ///
@@ -120,17 +123,33 @@ std::string get_name(const std::string& path_with_ext)
 
 }
 
-void execute_IBIS( int K, int compa, IBIS* Super_Pixel, cv::Mat* img, std::string output_basename ) {
+void execute_IBIS( int K, int compa, IBIS* Super_Pixel, cv::Mat* img, std::string output_basename, int ii ) {
 
     // process IBIS
+    Super_Pixel->config( img );
+    
+    double lap = Super_Pixel->now_ms();
     Super_Pixel->process( img );
+    cout<<"\rsegmentation in:\t"<< Super_Pixel->now_ms() - lap <<"\tms"<<flush;
 
     // convert int* labels to Mat* labels in gray scale
-    int* labels = Super_Pixel->getLabels();
-
+    /*if( ii % 2 == 0 ) {
+        float* pics_out = Super_Pixel->getBorders();
+        cv::Mat borders_show( img->rows, img->cols, CV_8UC1 );
+        for (int i = 0; i < img->cols*img->rows; i++)
+            borders_show.ptr()[ i ] = char(pics_out[ 3*i ]);
+        
+        imshow( "segmentation", borders_show );
+        int key = cv::waitKey(1);
+		if (key == 27)
+		    exit(EXIT_SUCCESS);
+        
+    }*/
+        
     const int width = img->cols;
     const int height = img->rows;
     const int color = 0xFFFFFFFF;
+    int* labels = Super_Pixel->getLabels();
     std::string output_labels = get_name(output_basename);
     output_labels = std::string("results/") + output_labels + std::string(".seg");
 
@@ -257,6 +276,10 @@ int main( int argc, char* argv[] )
             printf("single file processing\n");
             type=1;
         break;
+        case 8192:
+            printf("Device video processing\n");
+            type=2;
+        break;
         default:
             type=-1;
         break;
@@ -265,10 +288,33 @@ int main( int argc, char* argv[] )
 
     if( type == -1 )
         exit(EXIT_SUCCESS);
-    else if( type == 1 ) {
+    else if( type > 1 ) {
         // IBIS
         IBIS Super_Pixel( K, compa );
 
+        // get picture
+        cv::VideoCapture video( argv[ 3 ] );
+        if(!video.isOpened()) { // check if we succeeded
+            printf("Can't open this device or video file.\n");
+            exit(EXIT_SUCCESS);
+
+        }
+
+        cv::Mat img;
+        std::string output_basename = get_name( argv[3] );
+        
+        int ii=0;
+        while( video.read( img ) ) {
+            execute_IBIS( K, compa, &Super_Pixel, &img, argv[ 3 ], ii );
+            ii++;
+            
+        }
+
+    }
+    else if( type == 1 ) {
+        // IBIS
+        IBIS Super_Pixel( K, compa );
+        
         // get picture
         cv::Mat img = cv::imread( argv[ 3 ] );
 

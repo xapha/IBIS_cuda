@@ -35,8 +35,8 @@
 #define MASK_chrono         0       // 0:1 provide more informations ( complexity, process burden repartition ) : slow down the process !
 #define VISU                0       // show processed pixels for each iterations
 #define VISU_all            0       // for mask by mask visu of the processing : THREAD_count = 0, very slow
-#define OUTPUT_log          1       // 0:1 print output log
-#define KERNEL_log          1
+#define OUTPUT_log          0       // 0:1 print output log
+#define KERNEL_log          0
 
 #define STEP                2
 
@@ -164,7 +164,7 @@ typedef struct __c_ibis {
     int* __to_split_y;
     
 } __c_ibis;
-	
+
 __global__ void RGB2LAB( float* RGB, __c_ibis* __c_buffer, int count_exec );
 
 __global__ void update_seeds( int k, __c_ibis* ibis_data, int* __c_sp, int* __c_exec_count );
@@ -183,6 +183,12 @@ __global__ void fill_mask_assign( int k, __c_ibis* __c_buffer, int fill_count );
 
 __global__ void split_mask( int k, __c_ibis* __c_buffer, int* __c_exec_count, int split_count, int* __prep_exec_list_x, int* __prep_exec_list_y );
 
+__global__ void boundaries( float* RGB, __c_ibis* __c_buffer );
+
+__global__ void enforce_c(int*, int*);
+
+__device__ void suppress_local_label(int*, int*, int, int);
+
 class IBIS
 {
 
@@ -194,21 +200,23 @@ public:
 
     void process( cv::Mat* img );
     void init();
+    void config( cv::Mat* img );
     void reset();
 
     int getMaxSPNumber() { return maxSPNumber;}
     int getActualSPNumber() { return SPNumber; }
-    int* getLabels() { return initial_repartition; }
-
+    int* getLabels() { return initial_repartition; } //labels; }
+    float* getBorders();
+    
     float get_complexity();
-
+    double now_ms(void);
+    
 protected:
     void getLAB(cv::Mat *img);
     void initSeeds();
     void mask_propagate_SP();
     void mean_seeds();
 
-    double now_ms(void);
     void enforceConnectivity();
 
 private:

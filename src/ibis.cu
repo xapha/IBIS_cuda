@@ -747,13 +747,7 @@ void IBIS::getLAB( cv::Mat* img ) {
     
 }
 
-void IBIS::process( cv::Mat* img ) {
-
-#if OUTPUT_log
-    double lap;
-#endif
-    int g_dim, t_dim;
-
+void IBIS::config( cv::Mat* img ) {
     if( size == 0 ) {
         size = img->cols * img->rows;
         width = img->cols;
@@ -778,6 +772,25 @@ void IBIS::process( cv::Mat* img ) {
         
     }
     
+}
+
+float* IBIS::getBorders() {
+    dim3 blockSize(16, 16);
+	dim3 gridSize((int)ceil((float)width / (float)blockSize.x), (int)ceil((float)height / (float)blockSize.y));
+	boundaries <<< gridSize, blockSize >>> ( __c_RGB, __c_buffer );
+	
+    cudaMemcpy( __h_RGB, __c_RGB, sizeof(float) * size * 3, cudaMemcpyDeviceToHost );   
+    return __h_RGB;
+    
+}
+
+void IBIS::process( cv::Mat* img ) {
+
+#if OUTPUT_log
+    double lap;
+#endif
+    int g_dim, t_dim;
+
     st2 = 0;
     st3 = 0;
     st4 = 0;
@@ -823,15 +836,28 @@ void IBIS::process( cv::Mat* img ) {
     // STEP 2 : process IBIS
     mask_propagate_SP();
     
-    cudaMemcpy( labels, __h_buffer->__labels, size * sizeof( int ), cudaMemcpyDeviceToHost );
+    //cudaMemcpy( labels, __h_buffer->__labels, size * sizeof( int ), cudaMemcpyDeviceToHost );
 
 #if OUTPUT_log
     st3 = now_ms() - lap;
     lap = now_ms();
 #endif
     // STEP 3 : post processing
+    
+    cudaMemcpy( labels, __h_buffer->__labels, size * sizeof( int ), cudaMemcpyDeviceToHost );
     memcpy( initial_repartition, labels, sizeof(int) * size );
     enforceConnectivity();
+    
+    
+    /*
+    dim3 blockSize(16, 16);
+	dim3 gridSize((int)ceil((float)width / (float)blockSize.x), (int)ceil((float)height / (float)blockSize.y));
+	
+    enforce_c <<< gridSize, blockSize >>>(__h_buffer->__labels, __h_buffer->__t_labels);
+    enforce_c <<< gridSize, blockSize >>>(__h_buffer->__t_labels, __h_buffer->__labels);
+    
+    cudaMemcpy( initial_repartition, __h_buffer->__labels, size * sizeof( int ), cudaMemcpyDeviceToHost );
+    */
 
 #if OUTPUT_log
     st4 = now_ms() - lap;
@@ -1119,7 +1145,7 @@ __global__ void check_boundaries( int k, __c_ibis* __c_buffer, int exec_count, i
 }
 
 __global__ void fill_mask_assign( int k, __c_ibis* __c_buffer, int fill_count ) {
-    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    int index = blockIdx.x * blockDim.x * blockDim.y + blockDim.x*threadIdx.x + threadIdx.y;
     
     if( index >= fill_count )
         return;
@@ -1150,7 +1176,7 @@ __global__ void fill_mask_assign( int k, __c_ibis* __c_buffer, int fill_count ) 
 }
 
 __global__ void fill_mask( int k, __c_ibis* __c_buffer, int exec_count ) {
-    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    int index = blockIdx.x * blockDim.x * blockDim.y + blockDim.x*threadIdx.x + threadIdx.y;
     
     if( index >= exec_count )
         return;
@@ -1243,6 +1269,66 @@ __global__ void split_mask( int k, __c_ibis* __c_buffer, int* __c_exec_count, in
     
 }
 
+__global__ void boundaries( float* RGB, __c_ibis* __c_buffer ) {
+    int x = threadIdx.x + blockIdx.x * blockDim.x;
+	int y = threadIdx.y + blockIdx.y * blockDim.y;
+    
+    if ( x == 0 || x >= __c_width - 1 || y == 0 || y >= __c_height - 1)
+        return;
+    
+    if( ( __c_buffer->__labels[ y*__c_width + x - 1 ] != __c_buffer->__labels[ y*__c_width + x + 1 ] ) ||
+        ( __c_buffer->__labels[ (y-1)*__c_width + x ] != __c_buffer->__labels[ (y+1)*__c_width + x ] ) ) {
+        RGB[ 3*(y*__c_width + x) ] = 0;
+        RGB[ 3*(y*__c_width + x) + 1 ] = 0;
+        RGB[ 3*(y*__c_width + x) + 2 ] = 0;
+        
+    }
+    
+}
+
+__global__ void enforce_c(int* in_idx_img, int* out_idx_img)
+{
+	int x = threadIdx.x + blockIdx.x * blockDim.x;
+	int y = threadIdx.y + blockIdx.y * blockDim.y;
+	
+	if (x > __c_width - 1 || y > __c_height - 1) return;
+
+	suppress_local_label(in_idx_img, out_idx_img, x, y);
+	
+}
+
+__device__ void suppress_local_label(int* in_idx_img, int* out_idx_img, int x, int y)
+{
+	int clable = in_idx_img[y*__c_width + x];
+
+	// don't suppress boundary
+	if (x <= 1 || y <= 1 || x >= __c_width - 2 || y >= __c_height - 2)
+	{ 
+		out_idx_img[y*__c_width + x] = clable;
+		return; 
+	}
+
+	int diff_count = 0;
+	int diff_lable = -1;
+
+	for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++)
+	{
+		int nlable = in_idx_img[(y + j)*__c_width + (x + i)];
+		if (nlable!=clable)
+		{
+			diff_lable = nlable;
+			diff_count++;
+			
+		}
+		
+	}
+
+	if (diff_count>=16)
+		out_idx_img[y*__c_width + x] = diff_lable;
+	else
+		out_idx_img[y*__c_width + x] = clable;
+		
+}
 //--------------------------------------------------------------------------------CUDA
 
 void set_grid_block_dim( int* __g_dim, int* __t_dim, int ref_t, int value ) {
@@ -1326,7 +1412,7 @@ void IBIS::mask_propagate_SP() {
         split_count = sp_count[0];
         fill_count = sp_count[1];
         
-        set_grid_block_dim( &__g_dim_fill, &__t_dim_fill, 16, fill_count );
+        set_grid_block_dim( &__g_dim_fill, &__t_dim_fill, 256, fill_count );
         set_grid_block_dim( &__g_dim_split, &__t_dim_split, 256, split_count );
         
         // fill labels
@@ -1334,7 +1420,7 @@ void IBIS::mask_propagate_SP() {
         printf("  |-> fill_mask (%i ; %i) => %i \n", __g_dim_fill, __t_dim_fill, __t_dim_fill * __g_dim_fill );
 #endif
         
-        fill_mask_assign <<< __g_dim_fill, __t_dim_fill >>> ( k, __c_buffer, fill_count );
+        fill_mask_assign <<< __g_dim_fill, dim3( 16, 16 ) >>> ( k, __c_buffer, fill_count );
 #if KERNEL_log
         SAFE_KER( cudaPeekAtLastError() );
 #endif
@@ -1351,7 +1437,7 @@ void IBIS::mask_propagate_SP() {
 #endif
         
         // sum seeds
-        fill_mask <<< __g_dim_fill, __t_dim_fill >>> ( k, __c_buffer, fill_count );
+        fill_mask <<< __g_dim_fill, dim3( 16, 16 ) >>> ( k, __c_buffer, fill_count );
 #if KERNEL_log
         SAFE_KER( cudaPeekAtLastError() );
 #endif
