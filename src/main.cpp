@@ -179,7 +179,8 @@ void execute_IBIS( int K, int compa, IBIS* Super_Pixel, cv::Mat* img, std::strin
 
     cvReleaseImage(&output_bounds_alpha);
     cvReleaseImage(&output_bounds);
-
+    
+    
 }
 
 int filter( const struct dirent *name ) {

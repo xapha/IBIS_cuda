@@ -41,8 +41,8 @@ __global__ void RGB2LAB( float* RGB, __c_ibis* __c_buffer, int count_exec ) {
 	else				fz = 7.787f*zr + 0.137931034f;
 
 	__c_buffer->__lab[ 3*index + 0 ] = ( 116.0f*fy - 16.0f ) * 2.55f;
-	__c_buffer->__lab[ 3*index + 1 ] = ( 500.0f*(fx - fy) ) + 256;
-	__c_buffer->__lab[ 3*index + 2 ] = ( 200.0f*(fy - fz) ) + 256;
+	__c_buffer->__lab[ 3*index + 1 ] = ( 500.0f*(fx - fy) ) + 128;
+	__c_buffer->__lab[ 3*index + 2 ] = ( 200.0f*(fy - fz) ) + 128;
 	
 	//if( index == 26894 )
 	//    printf(" -- gpu -- (%i, %i, %i) = (%f, %f, %f) \n ", int( R[ index ] ), int( G[ index ] ), int( B[ index ] ), __c_buffer->__l_vec[ index ], __c_buffer->__a_vec[ index ], __c_buffer->__b_vec[ index ] );
